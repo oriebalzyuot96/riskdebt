@@ -19,7 +19,7 @@ HIGH     RD006  .claude/settings.json:4
   problem: Agent permission mode is bypassPermissions, so every action runs without human approval
   fix:     Use the default or acceptEdits mode and reserve bypass for disposable sandboxes without credentials.
 
-34 findings: 5 critical, 15 high, 13 medium, 1 low
+52 findings: 7 critical, 20 high, 24 medium, 1 low
 ```
 
 ## Why this exists
