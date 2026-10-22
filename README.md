@@ -54,7 +54,9 @@ This week's headlines repeat the same story: a popular AI library was compromise
 - **React / SPA**: `dangerouslySetInnerHTML`, auth tokens in `localStorage`, `innerHTML`, `eval`, `document.write`
 - **.NET**: SQL built by concatenation / `FromSqlRaw` interpolation, `BinaryFormatter`, Json.NET `TypeNameHandling`, `Html.Raw`, `AllowAnyOrigin`, certificate validation disabled, passwords in connection strings, floating NuGet versions
 - **PHP**: user input into `system()`/`exec()`, `unserialize()` on request data, `eval`, EOL PHP versions
-- **Node.js / Python**: TLS verification disabled, `shell=True`, `pickle`
+- **Node.js / Python**: TLS verification disabled, `shell=True`, `pickle`, SQL injection, CORS `*`, weak hashes, `debug=True`
+- **Where tokens are saved**: `localStorage`/`sessionStorage`, `document.cookie`, tokens in URLs, tokens in logs, hard-coded JWT secrets, JWT `none` algorithm, .NET cookies without `HttpOnly`/`Secure`, disabled JWT validation
+- **Docker**: mutable `:latest` base images
 
 Every finding includes a `problem` and a concrete `fix`. Full list: [docs/RULES.md](docs/RULES.md).
 

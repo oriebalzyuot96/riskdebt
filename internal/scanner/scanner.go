@@ -614,6 +614,9 @@ func Scan(root string, opts Options) (*Result, error) {
 	for _, f := range list {
 		base := path.Base(f.rel)
 		ext := extOf(base)
+		if base == "Dockerfile" || strings.HasPrefix(base, "Dockerfile.") {
+			ext = ".dockerfile"
+		}
 		if binaryExts[ext] {
 			continue
 		}

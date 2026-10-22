@@ -348,6 +348,8 @@ def scan(root: str, today: date | None = None, extra_blocklist: list | None = No
     for rel, abs_ in items:
         base = rel.rsplit("/", 1)[-1]
         ext = _ext(base)
+        if base == "Dockerfile" or base.startswith("Dockerfile."):
+            ext = ".dockerfile"
         if ext in BINARY_EXTS:
             continue
         try:

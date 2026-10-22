@@ -320,7 +320,8 @@ export function scan(root, opts = {}) {
   let scanned = 0;
   for (const f of list) {
     const base = path.posix.basename(f.rel);
-    const ext = extOf(base);
+    let ext = extOf(base);
+    if (base === 'Dockerfile' || base.startsWith('Dockerfile.')) ext = '.dockerfile';
     if (BINARY_EXTS.has(ext)) continue;
     let buf;
     try {

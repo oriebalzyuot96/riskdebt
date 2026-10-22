@@ -38,6 +38,22 @@ Every finding prints a `problem` and a `fix`. Data lives in [`rules/`](../rules)
 | Python | `verify=False` | high |
 | Python | `shell=True` | medium |
 | Python | `pickle.load(s)` | medium |
+| Any | token / API key in a URL query string | medium |
+| SPA | token in `localStorage` **or `sessionStorage`** | medium |
+| SPA | token/session cookie written via `document.cookie` (cannot be HttpOnly) | medium |
+| JavaScript | token or password written to `console.*` | medium |
+| Node.js | JWT `none` algorithm; JWT signed with a hard-coded secret | high |
+| Node.js | SQL from template literals / concatenation; CORS `*`; MD5/SHA-1 | high / medium |
+| .NET | cookie `HttpOnly`/`Secure` = false | high |
+| .NET | JWT `Validate*` flags set to false | high |
+| .NET | `[IgnoreAntiforgeryToken]`; `UseDeveloperExceptionPage` | medium |
+| PHP | `include($_GET[..])`; request data in SQL | critical |
+| Python | `debug=True`; MD5/SHA-1 | medium |
+| Docker | `FROM image:latest` | medium |
+
+## Where are tokens stored?
+
+riskdebt answers this directly. It flags tokens kept in web storage, written to cookies from script, sent in URLs, logged to the console, hard-coded in config/MCP files, and signing keys committed in code. The recommended home for a session token is a server-set `HttpOnly; Secure; SameSite` cookie, and for secrets an environment variable or secret manager.
 
 ## Scope notes
 
