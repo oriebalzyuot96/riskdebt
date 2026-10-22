@@ -9,7 +9,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 _RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 

@@ -17,7 +17,7 @@ import (
 	"github.com/oriebalzyuot96/riskdebt/rules"
 )
 
-const Version = "0.1.0"
+const Version = "0.1.1"
 
 var severityRank = map[string]int{"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 

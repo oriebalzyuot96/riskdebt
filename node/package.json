@@ -1,6 +1,6 @@
 {
   "name": "riskdebt",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Find the security debt hiding in your project: unpinned deps, leaked secrets, EOL runtimes, risky AI-agent configs, and Angular/React/.NET/PHP code smells - each with a fix.",
   "type": "module",
   "bin": { "riskdebt": "bin/riskdebt.js" },
