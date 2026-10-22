@@ -1,8 +1,19 @@
 # riskdebt
 
+[![npm](https://img.shields.io/npm/v/riskdebt?logo=npm)](https://www.npmjs.com/package/riskdebt)
+[![PyPI](https://img.shields.io/pypi/v/riskdebt?logo=pypi&logoColor=white)](https://pypi.org/project/riskdebt/)
+[![Go Reference](https://pkg.go.dev/badge/github.com/oriebalzyuot96/riskdebt.svg)](https://pkg.go.dev/github.com/oriebalzyuot96/riskdebt)
+[![CI](https://github.com/oriebalzyuot96/riskdebt/actions/workflows/ci.yml/badge.svg)](https://github.com/oriebalzyuot96/riskdebt/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **Velocity without alignment creates risk debt.** `riskdebt` finds it in seconds, tells you *where* it is, and tells you *how to fix it*.
 
 One zero-dependency scanner, shipped in **three languages** (Go, Node.js, Python) that share the same rules and are tested against each other, so each team can use the stack it already has.
+
+<p align="center">
+  <a href="demo/video/riskdebt-demo.mp4"><img src="demo/video/poster.jpg" alt="riskdebt 48-second explainer video" width="720"></a><br>
+  <sub>▶ <a href="demo/video/riskdebt-demo.mp4">Watch the 48-second explainer</a> (rendered from <a href="demo/video/explainer.html">explainer.html</a>)</sub>
+</p>
 
 ```text
 $ riskdebt .
@@ -65,14 +76,16 @@ Every finding includes a `problem` and a concrete `fix`. Full list: [docs/RULES.
 Pick the implementation that matches your stack. They produce identical findings.
 
 ```bash
-# Go
-go install github.com/oriebalzyuot96/riskdebt/cmd/riskdebt@latest
-
-# Node.js (>= 20)
-npx riskdebt .            # once published to npm; or: node node/bin/riskdebt.js .
+# Node.js (>= 20) - no install needed
+npx riskdebt .
 
 # Python (>= 3.9)
-pip install riskdebt      # once published to PyPI; or: PYTHONPATH=python/src python -m riskdebt .
+pip install riskdebt
+riskdebt .
+
+# Go
+go install github.com/oriebalzyuot96/riskdebt/cmd/riskdebt@latest
+riskdebt .
 ```
 
 ```text
