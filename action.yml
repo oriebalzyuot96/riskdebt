@@ -1,0 +1,53 @@
+name: riskdebt
+description: Find supply-chain, secret, end-of-life, AI-agent and Angular/React/.NET security debt in your repo, with a fix for every finding.
+author: Orieb Alzyuot
+branding:
+  icon: shield
+  color: red
+
+inputs:
+  path:
+    description: Directory to scan
+    default: '.'
+  fail-on:
+    description: Fail the job at or above this severity (critical, high, medium, low, none)
+    default: high
+  upload-sarif:
+    description: 'Upload results to GitHub code scanning (the workflow needs permissions: security-events: write)'
+    default: 'true'
+  version:
+    description: riskdebt version to install (a tag such as v0.1.0, or latest)
+    default: latest
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5.0.0
+      with:
+        go-version: '1.22'
+        cache: false
+    - name: Install riskdebt
+      shell: bash
+      env:
+        RD_VERSION: ${{ inputs.version }}
+      run: |
+        go install "github.com/oriebalzyuot96/riskdebt/cmd/riskdebt@${RD_VERSION}"
+        echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+    - name: Scan (SARIF)
+      if: inputs.upload-sarif == 'true'
+      shell: bash
+      env:
+        RD_PATH: ${{ inputs.path }}
+      run: riskdebt "$RD_PATH" --format sarif --fail-on none > "$RUNNER_TEMP/riskdebt.sarif"
+    - name: Upload to code scanning
+      if: inputs.upload-sarif == 'true'
+      uses: github/codeql-action/upload-sarif@48ab28a6f5dbc2a99bf1e0131198dd8f1df78169 # v3.28.0
+      with:
+        sarif_file: ${{ runner.temp }}/riskdebt.sarif
+        category: riskdebt
+    - name: Scan (report and gate)
+      shell: bash
+      env:
+        RD_PATH: ${{ inputs.path }}
+        RD_FAIL_ON: ${{ inputs.fail-on }}
+      run: riskdebt "$RD_PATH" --fail-on "$RD_FAIL_ON"

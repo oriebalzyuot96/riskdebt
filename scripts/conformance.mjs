@@ -30,6 +30,14 @@ for (const fixture of ['vulnerable-app', 'clean-app']) {
     }
     const out = JSON.parse(r.stdout);
     results[name] = out.findings.map((f) => `${f.rule}|${f.severity}|${f.file}:${f.line}`);
+    const s = spawnSync(cmd, [...base, `fixtures/${fixture}`, '--format', 'sarif', '--today', '2026-10-23', '--fail-on', 'none'], { cwd: root, env, encoding: 'utf8' });
+    const sarif = JSON.parse(s.stdout);
+    const sr = sarif.runs[0].results.map((x) => `${x.ruleId}|${x.locations[0].physicalLocation.artifactLocation.uri}:${x.locations[0].physicalLocation.region.startLine}`);
+    const jr = out.findings.map((f) => `${f.rule}|${f.file}:${f.line}`);
+    if (sarif.version !== '2.1.0' || JSON.stringify(sr) !== JSON.stringify(jr)) {
+      console.error(`${name}: SARIF output does not match findings on ${fixture}`);
+      failed = true;
+    }
     if (out.findings.some((f) => !f.fix)) {
       console.error(`${name}: finding without a fix on ${fixture}`);
       failed = true;

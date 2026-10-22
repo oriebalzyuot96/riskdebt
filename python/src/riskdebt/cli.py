@@ -6,6 +6,7 @@ import re
 import sys
 from datetime import date
 
+from .sarif import to_sarif
 from .scanner import VERSION, rank, scan
 
 USAGE = """riskdebt - find the security debt hiding in your project
@@ -13,7 +14,7 @@ USAGE = """riskdebt - find the security debt hiding in your project
 Usage: riskdebt [path] [options]
 
 Options:
-  -f, --format <text|json>   output format (default text)
+  -f, --format <text|json|sarif>   output format (default text)
       --fail-on <severity>   exit 1 at or above: critical|high|medium|low|none (default high)
       --today <YYYY-MM-DD>   override today's date (for reproducible EOL checks)
       --blocklist <file>     extra compromised-package list (JSON)
@@ -70,13 +71,15 @@ def main(argv: list[str] | None = None) -> int:
             root = a
         i += 1
 
-    if fmt not in ("text", "json"):
-        _die("--format must be text or json")
+    if fmt not in ("text", "json", "sarif"):
+        _die("--format must be text, json or sarif")
     if fail_on != "none" and rank(fail_on) < 0:
         _die("--fail-on must be critical|high|medium|low|none")
 
     res = scan(root, today=today, extra_blocklist=extra)
-    if fmt == "json":
+    if fmt == "sarif":
+        print(json.dumps(to_sarif(res), indent=2))
+    elif fmt == "json":
         print(json.dumps(res, indent=2))
     else:
         _print_text(res)
