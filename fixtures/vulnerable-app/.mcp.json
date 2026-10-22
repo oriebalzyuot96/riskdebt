@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "fs": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/"]
+    },
+    "db": {
+      "command": "uvx",
+      "args": ["mcp-server-postgres"],
+      "env": {"SERVICE_API_KEY": "not-a-real-key-123456"}
+    },
+    "safe": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory@1.2.3"],
+      "env": {"SERVICE_API_KEY": "${SERVICE_API_KEY}"}
+    }
+  }
+}

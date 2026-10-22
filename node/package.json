@@ -1,0 +1,17 @@
+{
+  "name": "riskdebt",
+  "version": "0.1.0",
+  "description": "Find the security debt hiding in your project: unpinned deps, leaked secrets, EOL runtimes, risky AI-agent configs, and Angular/React/.NET/PHP code smells - each with a fix.",
+  "type": "module",
+  "bin": { "riskdebt": "bin/riskdebt.js" },
+  "main": "src/scanner.js",
+  "files": ["bin", "src", "rules"],
+  "scripts": {
+    "test": "node --test",
+    "prepack": "node scripts/sync-rules.mjs"
+  },
+  "engines": { "node": ">=20" },
+  "keywords": ["security", "supply-chain", "sast", "secrets", "eol", "ai-agents", "mcp", "angular", "react", "dotnet", "php"],
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/oriebalzyuot96/riskdebt.git" }
+}

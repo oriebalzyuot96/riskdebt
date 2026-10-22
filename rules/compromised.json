@@ -1,0 +1,7 @@
+[
+  {"ecosystem": "npm", "name": "event-stream", "versions": ["3.3.6"], "reason": "malicious flatmap-stream dependency targeting a Bitcoin wallet (2018)"},
+  {"ecosystem": "npm", "name": "flatmap-stream", "versions": ["0.1.1"], "reason": "malicious payload used in the event-stream incident (2018)"},
+  {"ecosystem": "npm", "name": "ua-parser-js", "versions": ["0.7.29", "0.8.0", "1.0.0"], "reason": "hijacked release shipped a cryptominer and password stealer (2021)"},
+  {"ecosystem": "npm", "name": "colors", "versions": ["1.4.1", "1.4.2"], "reason": "maintainer-sabotaged releases with an infinite loop (2022)"},
+  {"ecosystem": "npm", "name": "faker", "versions": ["6.6.6"], "reason": "maintainer-sabotaged release (2022)"}
+]

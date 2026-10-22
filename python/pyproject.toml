@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "riskdebt"
+version = "0.1.0"
+description = "Find the security debt hiding in your project: unpinned deps, leaked secrets, EOL runtimes, risky AI-agent configs, and Angular/React/.NET/PHP code smells - each with a fix."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Orieb Alzyuot" }]
+keywords = ["security", "supply-chain", "sast", "secrets", "eol", "ai-agents", "mcp"]
+dependencies = []
+
+[project.scripts]
+riskdebt = "riskdebt.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/oriebalzyuot96/riskdebt"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/riskdebt"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"../rules" = "riskdebt/rules"

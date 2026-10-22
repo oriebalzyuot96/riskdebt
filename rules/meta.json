@@ -1,0 +1,10 @@
+{
+  "RD001": {"name": "unpinned-dependency", "fix": "Pin exact versions (e.g. \"1.2.3\"), commit a lockfile, and let Dependabot/Renovate propose upgrades through reviewed pull requests."},
+  "RD002": {"name": "missing-lockfile", "fix": "Commit package-lock.json / yarn.lock / pnpm-lock.yaml and install with `npm ci`. For Python use `pip-compile --generate-hashes` + `pip install --require-hashes`, or uv/poetry lock files."},
+  "RD003": {"name": "known-compromised-package", "fix": "Remove or upgrade immediately, rotate every secret reachable from machines or CI that installed it, and review lockfile history for when it entered."},
+  "RD004": {"name": "hardcoded-secret", "fix": "Remove it from source, revoke/rotate the credential now (assume it leaked, git history included), and load it from an environment variable or a secret manager. Add a secret-scanning pre-commit hook."},
+  "RD005": {"name": "end-of-life-runtime", "fix": "Upgrade to a supported release. If you cannot yet, isolate the service, add virtual patching (WAF rules) and set a dated retirement plan."},
+  "RD006": {"name": "ai-agent-config-risk", "fix": "Apply least privilege: allow only specific commands, keep human approval for sensitive actions, pin MCP server versions, and reference secrets as ${ENV_VAR} instead of literals."},
+  "RD007": {"name": "unpinned-github-action", "fix": "Pin third-party actions to a full 40-character commit SHA (keep a `# v4.1.0` comment) and let Dependabot update them."},
+  "RD008": {"name": "insecure-code-pattern", "fix": "See the per-finding fix."}
+}
