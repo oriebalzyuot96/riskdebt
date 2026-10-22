@@ -78,7 +78,7 @@ pip install riskdebt      # once published to PyPI; or: PYTHONPATH=python/src py
 ```text
 riskdebt [path] [options]
 
-  -f, --format <text|json>   output format (default text)
+  -f, --format <text|json|sarif>   output format (default text)
       --fail-on <severity>   exit 1 at or above critical|high|medium|low|none (default high)
       --today <YYYY-MM-DD>   reproducible EOL checks
       --blocklist <file>     add your own compromised-package list
@@ -86,13 +86,21 @@ riskdebt [path] [options]
 
 Add `// riskdebt-ignore` (any comment style) on a line to suppress a secret or code-pattern finding there.
 
-### In CI
+### In GitHub Actions (with code-scanning alerts)
 
 ```yaml
-- uses: actions/setup-go@v5
-- run: go install github.com/oriebalzyuot96/riskdebt/cmd/riskdebt@latest
-- run: riskdebt . --fail-on high
+permissions:
+  contents: read
+  security-events: write   # lets results appear in the Security tab
+
+steps:
+  - uses: actions/checkout@v4
+  - uses: oriebalzyuot96/riskdebt@main   # pin to a release tag or commit SHA
+    with:
+      fail-on: high
 ```
+
+Findings show up as alerts in **Security → Code scanning**, each with its fix. Or output SARIF yourself: `riskdebt . --format sarif > riskdebt.sarif`.
 
 ## Make it yours
 
@@ -112,11 +120,10 @@ node scripts/conformance.mjs
 
 ## Roadmap
 
-- SARIF output for GitHub code scanning
 - Live advisory lookups (OSV) behind an opt-in flag
 - More lockfile formats (`yarn.lock`, `pnpm-lock.yaml`, `poetry.lock`, `packages.lock.json`)
 - Rules for Java/Spring, Ruby/Rails, Go, Terraform and Kubernetes manifests
-- Pre-commit hook and GitHub Action wrappers
+- Pre-commit hook
 
 Ideas and rules welcome: see [CONTRIBUTING.md](CONTRIBUTING.md).
 

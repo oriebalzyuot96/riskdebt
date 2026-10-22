@@ -14,7 +14,7 @@ const usage = `riskdebt - find the security debt hiding in your project
 Usage: riskdebt [path] [options]
 
 Options:
-  -f, --format <text|json>   output format (default text)
+  -f, --format <text|json|sarif>   output format (default text)
       --fail-on <severity>   exit 1 at or above: critical|high|medium|low|none (default high)
       --today <YYYY-MM-DD>   override today's date (for reproducible EOL checks)
       --blocklist <file>     extra compromised-package list (JSON)
@@ -72,8 +72,8 @@ func main() {
 			root = a
 		}
 	}
-	if format != "text" && format != "json" {
-		die("--format must be text or json")
+	if format != "text" && format != "json" && format != "sarif" {
+		die("--format must be text, json or sarif")
 	}
 	if failOn != "none" && scanner.Rank(failOn) < 0 {
 		die("--fail-on must be critical|high|medium|low|none")
@@ -82,7 +82,10 @@ func main() {
 	if err != nil {
 		die(err.Error())
 	}
-	if format == "json" {
+	if format == "sarif" {
+		out, _ := json.MarshalIndent(scanner.SARIF(res), "", "  ")
+		fmt.Println(string(out))
+	} else if format == "json" {
 		out, _ := json.MarshalIndent(res, "", "  ")
 		fmt.Println(string(out))
 	} else {

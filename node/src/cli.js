@@ -1,12 +1,13 @@
 import fs from 'node:fs';
 import { scan, rank, VERSION } from './scanner.js';
+import { toSarif } from './sarif.js';
 
 const USAGE = `riskdebt - find the security debt hiding in your project
 
 Usage: riskdebt [path] [options]
 
 Options:
-  -f, --format <text|json>   output format (default text)
+  -f, --format <text|json|sarif>   output format (default text)
       --fail-on <severity>   exit 1 at or above: critical|high|medium|low|none (default high)
       --today <YYYY-MM-DD>   override today's date (for reproducible EOL checks)
       --blocklist <file>     extra compromised-package list (JSON)
@@ -64,11 +65,12 @@ export function main(argv) {
         root = a;
     }
   }
-  if (format !== 'text' && format !== 'json') die('--format must be text or json');
+  if (!['text', 'json', 'sarif'].includes(format)) die('--format must be text, json or sarif');
   if (failOn !== 'none' && rank(failOn) < 0) die('--fail-on must be critical|high|medium|low|none');
 
   const res = scan(root, opts);
-  if (format === 'json') console.log(JSON.stringify(res, null, 2));
+  if (format === 'sarif') console.log(JSON.stringify(toSarif(res), null, 2));
+  else if (format === 'json') console.log(JSON.stringify(res, null, 2));
   else printText(res);
   if (failOn !== 'none' && res.findings.some((f) => rank(f.severity) >= rank(failOn))) process.exitCode = 1;
 }
