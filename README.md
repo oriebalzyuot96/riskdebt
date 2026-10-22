@@ -10,6 +10,11 @@
 
 One zero-dependency scanner, shipped in **three languages** (Go, Node.js, Python) that share the same rules and are tested against each other, so each team can use the stack it already has.
 
+<p align="center">
+  <a href="demo/video/riskdebt-demo.mp4"><img src="demo/video/poster.jpg" alt="riskdebt 48-second explainer video" width="720"></a><br>
+  <sub>▶ <a href="demo/video/riskdebt-demo.mp4">Watch the 48-second explainer</a> (rendered from <a href="demo/video/explainer.html">explainer.html</a>)</sub>
+</p>
+
 ```text
 $ riskdebt .
 
