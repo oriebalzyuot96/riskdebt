@@ -16,7 +16,7 @@ inputs:
     description: 'Upload results to GitHub code scanning (the workflow needs permissions: security-events: write)'
     default: 'true'
   version:
-    description: riskdebt version to install (a tag such as v0.1.0, or latest)
+    description: riskdebt version to install (a tag such as v0.1.1, or latest)
     default: latest
 
 runs:
