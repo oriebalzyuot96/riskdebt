@@ -1,0 +1,13 @@
+# Configuration for the HOL plugin scanner (https://github.com/hashgraph-online/ai-plugin-scanner-action).
+#
+# riskdebt is itself a security scanner. These paths hold deliberately vulnerable test inputs (AWS documentation
+# example keys, eval() samples, risky workflows) that prove every rule fires. They are never executed and are
+# not included in the npm or PyPI packages, so they are excluded here. All shipped code is still scanned.
+[scanner]
+ignore_paths = [
+  "fixtures/*",
+  "node/test/*",
+  "python/tests/*",
+  "internal/scanner/*_test.go",
+  "scripts/conformance.mjs",
+]
