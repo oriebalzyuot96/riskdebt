@@ -7,7 +7,7 @@ import { BUILTIN_IGNORES, matches, parseIgnoreLine, parseIgnoreText } from './ig
 import { fingerprintAll } from './baseline.js';
 import { checkWorkflowRisk } from './workflow.js';
 
-export const VERSION = '0.1.1';
+export const VERSION = '0.2.0';
 
 const SEVERITY_RANK = { info: 0, low: 1, medium: 2, high: 3, critical: 4 };
 export const rank = (s) => (s in SEVERITY_RANK ? SEVERITY_RANK[s] : -1);

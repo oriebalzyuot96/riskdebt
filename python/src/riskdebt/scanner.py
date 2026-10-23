@@ -13,7 +13,7 @@ from .baseline import fingerprint_all
 from .ignore import BUILTIN_IGNORES, matches, parse_ignore_line, parse_ignore_text
 from .workflow import check_workflow_risk
 
-VERSION = "0.1.1"
+VERSION = "0.2.0"
 
 _RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 

@@ -22,7 +22,7 @@ import (
 // disableHints is set by tests to prove the hints are only an optimisation: they must never hide a finding.
 var disableHints bool
 
-const Version = "0.1.1"
+const Version = "0.2.0"
 
 var severityRank = map[string]int{"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 
