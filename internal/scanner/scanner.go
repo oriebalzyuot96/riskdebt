@@ -88,6 +88,7 @@ type secretRule struct {
 	Severity         string   `json:"severity"`
 	SkipPlaceholders bool     `json:"skipPlaceholders"`
 	Hints            []string `json:"hints"`
+	ValueFilter      string   `json:"valueFilter"` // "wordy": skip values that read like words, not like random secrets
 	re               *regexp.Regexp
 }
 
@@ -115,7 +116,8 @@ type engine struct {
 	today        time.Time
 	files        map[string]bool
 	findings     []Finding
-	ignores      []ignoreRule
+	ignores      []scopedIgnore
+	gitignore    bool // read .gitignore files (the root one and the ones in sub-folders)
 	maxSize      int64
 	skipped      Skipped
 	mu           sync.Mutex // guards findings and skipped while files are scanned in parallel
@@ -466,9 +468,68 @@ func (e *engine) checkSecrets(rel, text, lower string) {
 			if r.SkipPlaceholders && e.isPlaceholder(m) {
 				continue
 			}
+			if r.ValueFilter == "wordy" && isWordy(lastQuoted(m)) {
+				continue
+			}
 			e.add("RD004", r.Severity, rel, i+1, "Possible "+r.Name+" committed to source", "")
 		}
 	}
+}
+
+// lastQuoted returns the text inside the last quoted string of a match such as token: "abc".
+func lastQuoted(m string) string {
+	if len(m) < 2 {
+		return m
+	}
+	q := m[len(m)-1]
+	if q != '"' && q != '\'' {
+		return m
+	}
+	if i := strings.LastIndexByte(m[:len(m)-1], q); i >= 0 {
+		return m[i+1 : len(m)-1]
+	}
+	return m
+}
+
+// isWordy reports whether a value reads like words (a route, an error code, a CSS variable) rather than a random
+// secret: at least two words (split on _ - / + and camelCase), each three or more letters, and at most two digits.
+func isWordy(v string) bool {
+	digits := 0
+	var tokens []string
+	var cur []byte
+	flush := func() {
+		if len(cur) > 0 {
+			tokens = append(tokens, string(cur))
+			cur = cur[:0]
+		}
+	}
+	var prev byte
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		switch {
+		case c >= '0' && c <= '9':
+			digits++
+			cur = append(cur, c)
+		case c == '_' || c == '-' || c == '/' || c == '+':
+			flush()
+		case c >= 'A' && c <= 'Z' && prev >= 'a' && prev <= 'z':
+			flush()
+			cur = append(cur, c)
+		default:
+			cur = append(cur, c)
+		}
+		prev = c
+	}
+	flush()
+	if digits > 2 || len(tokens) < 2 {
+		return false
+	}
+	for _, t := range tokens {
+		if len(t) < 3 {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *engine) isPlaceholder(m string) bool {
@@ -664,10 +725,34 @@ func (e *engine) checkWorkflow(rel, text string) {
 	}
 }
 
+// scopedIgnore is an ignore rule that only applies below scope (a folder relative to the scan root; "" = everywhere).
+type scopedIgnore struct {
+	rule  ignoreRule
+	scope string
+}
+
+func (e *engine) addIgnores(scope string, rules ...ignoreRule) {
+	for _, r := range rules {
+		e.ignores = append(e.ignores, scopedIgnore{rule: r, scope: scope})
+	}
+}
+
+// loadNestedGitignore reads dir/.gitignore (dir is relative to the scan root) the way git does: its patterns only
+// apply inside dir, and "/pattern" is anchored to dir.
+func (e *engine) loadNestedGitignore(dirAbs, dirRel string) {
+	if !e.gitignore {
+		return
+	}
+	if data, err := os.ReadFile(filepath.Join(dirAbs, ".gitignore")); err == nil {
+		e.addIgnores(dirRel, parseIgnoreText(string(data))...)
+	}
+}
+
 func (e *engine) loadIgnores(root string, opts Options) {
+	e.gitignore = !opts.NoGitignore
 	for _, p := range builtinIgnores {
 		if r, ok := parseIgnoreLine(p); ok {
-			e.ignores = append(e.ignores, r)
+			e.addIgnores("", r)
 		}
 	}
 	files := []string{".riskdebtignore"}
@@ -676,12 +761,12 @@ func (e *engine) loadIgnores(root string, opts Options) {
 	}
 	for _, name := range files {
 		if data, err := os.ReadFile(filepath.Join(root, name)); err == nil {
-			e.ignores = append(e.ignores, parseIgnoreText(string(data))...)
+			e.addIgnores("", parseIgnoreText(string(data))...)
 		}
 	}
 	for _, p := range opts.Exclude {
 		if r, ok := parseIgnoreLine(p); ok {
-			e.ignores = append(e.ignores, r)
+			e.addIgnores("", r)
 		}
 	}
 	kb := opts.MaxSizeKB
@@ -692,8 +777,15 @@ func (e *engine) loadIgnores(root string, opts Options) {
 }
 
 func (e *engine) ignored(rel, base string, isDir bool) bool {
-	for _, r := range e.ignores {
-		if r.matches(rel, base, isDir) {
+	for _, s := range e.ignores {
+		sub := rel
+		if s.scope != "" {
+			if !strings.HasPrefix(rel, s.scope+"/") {
+				continue
+			}
+			sub = rel[len(s.scope)+1:]
+		}
+		if s.rule.matches(sub, base, isDir) {
 			return true
 		}
 	}
@@ -781,6 +873,9 @@ func Scan(root string, opts Options) (*Result, error) {
 			if p != root && (skipDirs[d.Name()] || e.ignored(rel, d.Name(), true)) {
 				e.skipped.Dirs++
 				return filepath.SkipDir
+			}
+			if p != root {
+				e.loadNestedGitignore(p, rel)
 			}
 			return nil
 		}

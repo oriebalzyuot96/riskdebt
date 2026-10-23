@@ -1,0 +1,17 @@
+[
+  {"value": "users/RefreshToken", "want": true},
+  {"value": "users/ForgotPassword", "want": true},
+  {"value": "auth/reset-password", "want": true},
+  {"value": "mashroo3hub_WrongPassword", "want": true},
+  {"value": "mashroo3hub_InvalidRefreshToken", "want": true},
+  {"value": "--primary-info-color", "want": true},
+  {"value": "refreshTokenValueName", "want": true},
+  {"value": "a1b2c3d4e5f6a7b8c9d0e1f2", "want": false},
+  {"value": "abcdefghijklmnop1234", "want": false},
+  {"value": "not-a-real-key-123456", "want": false},
+  {"value": "kJ8dLq2PzXw9RtYb", "want": false},
+  {"value": "AbCdEfGhIjKlMnOp", "want": false},
+  {"value": "abcdefghijklmnop", "want": false},
+  {"value": "a_b_c_d_e_f_g_h_i_j", "want": false},
+  {"value": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "want": false}
+]

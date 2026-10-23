@@ -1,0 +1,7 @@
+http:
+  body:
+    data: |
+      {
+        "token": "PASTE_EXPIRED_ACCESS_TOKEN_HERE",
+        "refreshToken": "PASTE_REFRESH_TOKEN_HERE"
+      }

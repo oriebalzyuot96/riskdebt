@@ -132,7 +132,8 @@ class Engine:
         self.blocklist = _load(d, "compromised.json") + (extra_blocklist or [])
         self.today = today
         self.files: set[str] = set()
-        self.ignores: list = []
+        self.ignores: list = []  # (rule, scope): scope is a folder relative to the scan root ("" = everywhere)
+        self.gitignore = True
         self.max_size = DEFAULT_MAX_SIZE_KB * 1024
         self.skipped = {"dirs": 0, "files": 0}
         self.findings: list[dict] = []
@@ -241,6 +242,8 @@ class Engine:
                 if not m:
                     continue
                 if r.get("skipPlaceholders") and self._placeholder(m.group(0)):
+                    continue
+                if r.get("valueFilter") == "wordy" and is_wordy(last_quoted(m.group(0))):
                     continue
                 self.add("RD004", r["severity"], rel, i + 1, f"Possible {r['name']} committed to source")
 
@@ -352,24 +355,79 @@ class Engine:
                          f'Action {m.group(1)} is not pinned to a commit SHA (ref "{ref}" can be moved by its owner)')
 
 
+def _add_ignores(e: Engine, scope: str, rules: list) -> None:
+    e.ignores.extend((r, scope) for r in rules if r)
+
+
+def _load_nested_gitignore(e: Engine, dir_abs: Path, dir_rel: str) -> None:
+    """Reads dir/.gitignore the way git does: its patterns only apply inside dir, and "/pattern" is anchored to dir."""
+    if not e.gitignore:
+        return
+    try:
+        _add_ignores(e, dir_rel, parse_ignore_text((dir_abs / ".gitignore").read_text(encoding="utf-8", errors="replace")))
+    except OSError:
+        pass
+
+
 def _load_ignores(e: Engine, root: Path, no_gitignore: bool, exclude: list | None, max_size_kb: int | None) -> None:
-    for p in BUILTIN_IGNORES:
-        e.ignores.append(parse_ignore_line(p))
+    e.gitignore = not no_gitignore
+    _add_ignores(e, "", [parse_ignore_line(p) for p in BUILTIN_IGNORES])
     names = [".riskdebtignore"] + ([] if no_gitignore else [".gitignore"])
     for name in names:
         try:
-            e.ignores.extend(parse_ignore_text((root / name).read_text(encoding="utf-8", errors="replace")))
+            _add_ignores(e, "", parse_ignore_text((root / name).read_text(encoding="utf-8", errors="replace")))
         except OSError:
             pass
-    for p in exclude or []:
-        r = parse_ignore_line(p)
-        if r:
-            e.ignores.append(r)
+    _add_ignores(e, "", [parse_ignore_line(p) for p in exclude or []])
     e.max_size = (max_size_kb if max_size_kb and max_size_kb > 0 else DEFAULT_MAX_SIZE_KB) * 1024
 
 
 def _ignored(e: Engine, rel: str, base: str, is_dir: bool) -> bool:
-    return any(matches(r, rel, base, is_dir) for r in e.ignores)
+    for rule, scope in e.ignores:
+        if scope:
+            if not rel.startswith(scope + "/"):
+                continue
+            if matches(rule, rel[len(scope) + 1:], base, is_dir):
+                return True
+        elif matches(rule, rel, base, is_dir):
+            return True
+    return False
+
+
+def last_quoted(m: str) -> str:
+    """The text inside the last quoted string of a match such as token: "abc"."""
+    q = m[-1:]
+    if len(m) < 2 or q not in ('"', "'"):
+        return m
+    i = m.rfind(q, 0, len(m) - 1)
+    return m[i + 1:-1] if i >= 0 else m
+
+
+def is_wordy(v: str) -> bool:
+    """Does a value read like words (a route, an error code, a CSS variable) rather than a random secret?
+    At least two words (split on _ - / + and camelCase), each three or more letters, and at most two digits."""
+    digits = 0
+    tokens: list[str] = []
+    cur = ""
+    prev = ""
+    for c in v:
+        if "0" <= c <= "9":
+            digits += 1
+            cur += c
+        elif c in "_-/+":
+            if cur:
+                tokens.append(cur)
+            cur = ""
+        elif "A" <= c <= "Z" and "a" <= prev <= "z":
+            if cur:
+                tokens.append(cur)
+            cur = c
+        else:
+            cur += c
+        prev = c
+    if cur:
+        tokens.append(cur)
+    return digits <= 2 and len(tokens) >= 2 and all(len(t) >= 3 for t in tokens)
 
 
 def _has_hint(lower: str, hints: list | None) -> bool:
@@ -377,6 +435,8 @@ def _has_hint(lower: str, hints: list | None) -> bool:
 
 
 def _walk(e: Engine, root: Path, d: Path, out: list) -> None:
+    if d != root:
+        _load_nested_gitignore(e, d, d.relative_to(root).as_posix())
     for entry in sorted(os.scandir(d), key=lambda x: x.name):
         rel = Path(entry.path).relative_to(root).as_posix()
         if entry.is_dir(follow_symlinks=False):
