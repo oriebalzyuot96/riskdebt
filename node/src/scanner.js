@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BUILTIN_IGNORES, matches, parseIgnoreLine, parseIgnoreText } from './ignore.js';
+import { fingerprintAll } from './baseline.js';
+import { checkWorkflowRisk } from './workflow.js';
 
 export const VERSION = '0.1.1';
 
@@ -147,8 +149,16 @@ class Engine {
     this.findings = [];
   }
 
-  add(rule, severity, file, line, message, fix = '') {
-    this.findings.push({ rule, name: this.meta[rule].name, severity, file, line, message, fix: fix || this.meta[rule].fix });
+  // tags: { check, cwe, owasp }. check names the sub-check inside a rule family; missing cwe/owasp fall back to the
+  // family's tags from meta.json (OWASP ids use the 2025 lists, e.g. "A05:2025", "LLM06:2025").
+  add(rule, severity, file, line, message, fix = '', tags = {}) {
+    const m = this.meta[rule];
+    const f = { rule, name: m.name, severity, file, line, message, fix: fix || m.fix };
+    if (tags.check) f.check = tags.check;
+    f.cwe = tags.cwe || m.cwe || [];
+    f.owasp = tags.owasp || m.owasp || [];
+    f.fingerprint = '';
+    this.findings.push(f);
   }
 
   isPlaceholder(m) {
@@ -250,7 +260,7 @@ class Engine {
         if (!m) continue;
         if (r.skipPlaceholders && this.isPlaceholder(m[0])) continue;
         if (r.valueFilter === 'wordy' && isWordy(lastQuoted(m[0]))) continue;
-        this.add('RD004', r.severity, rel, i + 1, `Possible ${r.name} committed to source`);
+        this.add('RD004', r.severity, rel, i + 1, `Possible ${r.name} committed to source`, '', { check: r.id, cwe: r.cwe, owasp: r.owasp });
       }
     });
   }
@@ -265,7 +275,7 @@ class Engine {
         if (i < lowerLines.length && !hasHint(lowerLines[i], r.hints)) continue;
         const m = l.match(r.re);
         if (!m || (r.skipPlaceholders && this.isPlaceholder(m[0]))) continue;
-        this.add('RD008', r.severity, rel, i + 1, `[${r.framework}] ${r.name}`, r.fix);
+        this.add('RD008', r.severity, rel, i + 1, `[${r.framework}] ${r.name}`, r.fix, { check: r.id, cwe: r.cwe, owasp: r.owasp });
       }
     });
   }
@@ -458,11 +468,16 @@ export function scan(root, opts = {}) {
     e.checkEOL(f.rel, base, text);
     if (endsWithPath(f.rel, '.claude/settings.json') || endsWithPath(f.rel, '.claude/settings.local.json')) e.checkClaudeSettings(f.rel, text);
     if (base === '.mcp.json' || endsWithPath(f.rel, '.cursor/mcp.json') || endsWithPath(f.rel, '.vscode/mcp.json')) e.checkMCP(f.rel, text);
-    if (('/' + f.rel).includes('/.github/workflows/') && (ext === '.yml' || ext === '.yaml')) e.checkWorkflow(f.rel, text);
+    if (('/' + f.rel).includes('/.github/workflows/') && (ext === '.yml' || ext === '.yaml')) {
+      e.checkWorkflow(f.rel, text);
+      checkWorkflowRisk(e, f.rel, text);
+    }
   }
   const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
   e.findings.sort((a, b) => cmp(a.file, b.file) || a.line - b.line || cmp(a.rule, b.rule) || cmp(a.message, b.message));
+  fingerprintAll(e.findings, root);
   const summary = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   for (const f of e.findings) summary[f.severity]++;
-  return { tool: 'riskdebt', version: VERSION, root, scanned, skipped: e.skipped, findings: e.findings, summary };
+  // baselined / baselineStale / since are filled in by applyBaseline() and filterSince() (see baseline.js)
+  return { tool: 'riskdebt', version: VERSION, root, scanned, skipped: e.skipped, baselined: 0, baselineStale: 0, findings: e.findings, summary };
 }

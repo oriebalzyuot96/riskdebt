@@ -42,16 +42,28 @@ type Finding struct {
 	Line     int    `json:"line"`
 	Message  string `json:"message"`
 	Fix      string `json:"fix"`
+	// Check is the sub-check inside a rule family (a secret pattern, a code pattern, a workflow check).
+	Check string `json:"check,omitempty"`
+	// CWE and OWASP tag the weakness (OWASP ids use the 2025 lists, e.g. "A05:2025", "LLM06:2025").
+	CWE   []string `json:"cwe"`
+	OWASP []string `json:"owasp"`
+	// Fingerprint identifies the finding by rule, file and line text, so it survives edits elsewhere in the file.
+	Fingerprint string `json:"fingerprint"`
 }
 
 type Result struct {
-	Tool     string         `json:"tool"`
-	Version  string         `json:"version"`
-	Root     string         `json:"root"`
-	Scanned  int            `json:"scanned"`
-	Skipped  Skipped        `json:"skipped"`
-	Findings []Finding      `json:"findings"`
-	Summary  map[string]int `json:"summary"`
+	Tool    string  `json:"tool"`
+	Version string  `json:"version"`
+	Root    string  `json:"root"`
+	Scanned int     `json:"scanned"`
+	Skipped Skipped `json:"skipped"`
+	// Baselined counts findings hidden because they are in the baseline; BaselineStale counts baseline entries
+	// that no longer match anything. Since is the git ref of --since, if used.
+	Baselined     int            `json:"baselined"`
+	BaselineStale int            `json:"baselineStale"`
+	Since         string         `json:"since,omitempty"`
+	Findings      []Finding      `json:"findings"`
+	Summary       map[string]int `json:"summary"`
 }
 
 // Skipped counts what the walk deliberately did not read, so a clean result is never mistaken for full coverage.
@@ -76,8 +88,10 @@ type Options struct {
 }
 
 type metaEntry struct {
-	Name string `json:"name"`
-	Fix  string `json:"fix"`
+	Name  string   `json:"name"`
+	Fix   string   `json:"fix"`
+	CWE   []string `json:"cwe"`
+	OWASP []string `json:"owasp"`
 }
 
 type secretRule struct {
@@ -88,6 +102,8 @@ type secretRule struct {
 	Severity         string   `json:"severity"`
 	SkipPlaceholders bool     `json:"skipPlaceholders"`
 	Hints            []string `json:"hints"`
+	CWE              []string `json:"cwe"`
+	OWASP            []string `json:"owasp"`
 	ValueFilter      string   `json:"valueFilter"` // "wordy": skip values that read like words, not like random secrets
 	re               *regexp.Regexp
 }
@@ -103,6 +119,8 @@ type patternRule struct {
 	SkipPlaceholders bool     `json:"skipPlaceholders"`
 	Fix              string   `json:"fix"`
 	Hints            []string `json:"hints"`
+	CWE              []string `json:"cwe"`
+	OWASP            []string `json:"owasp"`
 	re               *regexp.Regexp
 }
 
@@ -182,14 +200,27 @@ func (e *engine) skip() {
 }
 
 func (e *engine) add(rule, severity, file string, line int, message, fix string) {
+	e.addTagged(rule, severity, file, line, message, fix, "", nil, nil)
+}
+
+// addTagged records a finding; nil cwe/owasp fall back to the rule family's tags from meta.json.
+func (e *engine) addTagged(rule, severity, file string, line int, message, fix, check string, cwe, owasp []string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	m := e.meta[rule]
 	if fix == "" {
-		fix = e.meta[rule].Fix
+		fix = m.Fix
+	}
+	if cwe == nil {
+		cwe = m.CWE
+	}
+	if owasp == nil {
+		owasp = m.OWASP
 	}
 	e.findings = append(e.findings, Finding{
-		Rule: rule, Name: e.meta[rule].Name, Severity: severity,
+		Rule: rule, Name: m.Name, Severity: severity,
 		File: file, Line: line, Message: message, Fix: fix,
+		Check: check, CWE: cwe, OWASP: owasp,
 	})
 }
 
@@ -471,7 +502,7 @@ func (e *engine) checkSecrets(rel, text, lower string) {
 			if r.ValueFilter == "wordy" && isWordy(lastQuoted(m)) {
 				continue
 			}
-			e.add("RD004", r.Severity, rel, i+1, "Possible "+r.Name+" committed to source", "")
+			e.addTagged("RD004", r.Severity, rel, i+1, "Possible "+r.Name+" committed to source", "", r.ID, r.CWE, r.OWASP)
 		}
 	}
 }
@@ -569,7 +600,7 @@ func (e *engine) checkPatterns(rel, ext, text, lower string) {
 			if m == "" || (r.SkipPlaceholders && e.isPlaceholder(m)) {
 				continue
 			}
-			e.add("RD008", r.Severity, rel, i+1, fmt.Sprintf("[%s] %s", r.Framework, r.Name), r.Fix)
+			e.addTagged("RD008", r.Severity, rel, i+1, fmt.Sprintf("[%s] %s", r.Framework, r.Name), r.Fix, r.ID, r.CWE, r.OWASP)
 		}
 	}
 }
@@ -848,6 +879,7 @@ func scanFile(e *engine, rel, abs string, scanned *int64) {
 	}
 	if strings.Contains("/"+rel, "/.github/workflows/") && (ext == ".yml" || ext == ".yaml") {
 		e.checkWorkflow(rel, text)
+		e.checkWorkflowRisk(rel, text)
 	}
 }
 
@@ -922,6 +954,7 @@ func Scan(root string, opts Options) (*Result, error) {
 		}
 		return a.Message < b.Message
 	})
+	e.fingerprintAll(root)
 	summary := map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
 	for _, f := range e.findings {
 		summary[f.Severity]++
