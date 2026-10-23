@@ -1,0 +1,21 @@
+name: risky
+on:
+  pull_request_target:
+permissions: write-all
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Greet
+        run: echo "Title is ${{ github.event.pull_request.title }}"
+      - name: Install
+        run: |
+          curl -sSL https://example.com/install.sh | bash
+          echo "${{ github.head_ref }}"
+      - name: Safe, value goes through env
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: echo "$TITLE"

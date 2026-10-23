@@ -1,6 +1,8 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { scan, rank, VERSION } from './scanner.js';
 import { toSarif } from './sarif.js';
+import { DEFAULT_BASELINE_FILE, applyBaseline, filterSince, loadBaseline, newBaseline } from './baseline.js';
 
 const USAGE = `riskdebt - find the security debt hiding in your project
 
@@ -14,6 +16,10 @@ Options:
       --exclude <pattern>    skip paths, .gitignore-style (repeatable); also reads .riskdebtignore
       --no-gitignore         do not read .gitignore (it is honoured by default)
       --max-size <KB>        skip files larger than this (default 1024)
+      --since <git-ref>      only report findings on lines changed since this ref (what a pull request adds)
+      --write-baseline <file>  save every current finding as known, then exit 0
+      --baseline <file>      hide the findings listed in this baseline (default: .riskdebt-baseline.json if present)
+      --no-baseline          ignore the default baseline file
   -v, --version              print version
   -h, --help                 show this help
 `;
@@ -27,6 +33,10 @@ export function main(argv) {
   let root = '.';
   let format = 'text';
   let failOn = 'high';
+  let since = '';
+  let baselinePath = '';
+  let writeBaseline = '';
+  let noBaseline = false;
   const opts = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -68,6 +78,18 @@ export function main(argv) {
         opts.maxSizeKB = kb;
         break;
       }
+      case '--since':
+        since = next();
+        break;
+      case '--baseline':
+        baselinePath = next();
+        break;
+      case '--write-baseline':
+        writeBaseline = next();
+        break;
+      case '--no-baseline':
+        noBaseline = true;
+        break;
       case '--blocklist':
         try {
           opts.extraBlocklist = JSON.parse(fs.readFileSync(next(), 'utf8'));
@@ -82,8 +104,29 @@ export function main(argv) {
   }
   if (!['text', 'json', 'sarif'].includes(format)) die('--format must be text, json or sarif');
   if (failOn !== 'none' && rank(failOn) < 0) die('--fail-on must be critical|high|medium|low|none');
+  if (writeBaseline && (since || baselinePath)) die('--write-baseline records the full scan; do not combine it with --since or --baseline');
 
   const res = scan(root, opts);
+
+  if (writeBaseline) {
+    fs.writeFileSync(writeBaseline, JSON.stringify(newBaseline(res), null, 2) + '\n');
+    console.log(`Baseline written: ${res.findings.length} findings -> ${writeBaseline}`);
+    return;
+  }
+  try {
+    if (!noBaseline) {
+      let file = baselinePath;
+      if (!file) {
+        const def = path.join(root, DEFAULT_BASELINE_FILE);
+        if (fs.existsSync(def) && fs.statSync(def).isFile()) file = def;
+      }
+      if (file) applyBaseline(res, loadBaseline(file));
+    }
+    if (since) filterSince(res, root, since);
+  } catch (err) {
+    die(err.message);
+  }
+
   if (format === 'sarif') console.log(JSON.stringify(toSarif(res), null, 2));
   else if (format === 'json') console.log(JSON.stringify(res, null, 2));
   else printText(res);
@@ -94,9 +137,17 @@ function printText(r) {
   const color = process.stdout.isTTY && !process.env.NO_COLOR;
   const paint = (code, s) => (color ? `\x1b[${code}m${s}\x1b[0m` : s);
   const colors = { critical: '1;31', high: '31', medium: '33', low: '36', info: '2' };
-  console.log(`riskdebt ${r.version} - scanned ${r.scanned} files in ${r.root} (skipped ${r.skipped.dirs} folders, ${r.skipped.files} files: ignored, binary or too large)\n`);
+  console.log(`riskdebt ${r.version} - scanned ${r.scanned} files in ${r.root} (skipped ${r.skipped.dirs} folders, ${r.skipped.files} files: ignored, binary or too large)`);
+  if (r.since) console.log(`diff-only: findings on lines changed since ${r.since}`);
+  if (r.baselined > 0 || r.baselineStale > 0) {
+    let line = `baseline: ${r.baselined} known findings hidden`;
+    if (r.baselineStale > 0) line += `, ${r.baselineStale} entries no longer match (refresh with --write-baseline)`;
+    console.log(line);
+  }
+  console.log('');
   for (const f of r.findings) {
-    console.log(`${paint(colors[f.severity], f.severity.toUpperCase().padEnd(8))} ${f.rule}  ${f.file}:${f.line}`);
+    const tags = [...f.cwe, ...f.owasp];
+    console.log(`${paint(colors[f.severity], f.severity.toUpperCase().padEnd(8))} ${f.rule}  ${f.file}:${f.line}${tags.length ? `  [${tags.join(' · ')}]` : ''}`);
     console.log(`  problem: ${f.message}`);
     console.log(`  fix:     ${f.fix}\n`);
   }

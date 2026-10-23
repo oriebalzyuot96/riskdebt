@@ -9,7 +9,9 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .baseline import fingerprint_all
 from .ignore import BUILTIN_IGNORES, matches, parse_ignore_line, parse_ignore_text
+from .workflow import check_workflow_risk
 
 VERSION = "0.1.1"
 
@@ -138,9 +140,20 @@ class Engine:
         self.skipped = {"dirs": 0, "files": 0}
         self.findings: list[dict] = []
 
-    def add(self, rule: str, severity: str, file: str, line: int, message: str, fix: str = "") -> None:
-        self.findings.append({"rule": rule, "name": self.meta[rule]["name"], "severity": severity, "file": file,
-                              "line": line, "message": message, "fix": fix or self.meta[rule]["fix"]})
+    def add(self, rule: str, severity: str, file: str, line: int, message: str, fix: str = "",
+            tags: dict | None = None) -> None:
+        """tags: {"check", "cwe", "owasp"}. check names the sub-check inside a rule family; missing cwe/owasp fall
+        back to the family's tags from meta.json (OWASP ids use the 2025 lists, e.g. "A05:2025", "LLM06:2025")."""
+        tags = tags or {}
+        m = self.meta[rule]
+        f = {"rule": rule, "name": m["name"], "severity": severity, "file": file, "line": line,
+             "message": message, "fix": fix or m["fix"]}
+        if tags.get("check"):
+            f["check"] = tags["check"]
+        f["cwe"] = tags.get("cwe") or m.get("cwe", [])
+        f["owasp"] = tags.get("owasp") or m.get("owasp", [])
+        f["fingerprint"] = ""
+        self.findings.append(f)
 
     def _placeholder(self, m: str) -> bool:
         lm = m.lower()
@@ -245,7 +258,8 @@ class Engine:
                     continue
                 if r.get("valueFilter") == "wordy" and is_wordy(last_quoted(m.group(0))):
                     continue
-                self.add("RD004", r["severity"], rel, i + 1, f"Possible {r['name']} committed to source")
+                self.add("RD004", r["severity"], rel, i + 1, f"Possible {r['name']} committed to source", "",
+                         {"check": r["id"], "cwe": r.get("cwe"), "owasp": r.get("owasp")})
 
     def check_patterns(self, rel: str, ext: str, text: str, lower: str) -> None:
         active = [(r, rx) for r, rx in self.patterns if ext in r["exts"] and _has_hint(lower, r.get("hints"))]
@@ -261,7 +275,8 @@ class Engine:
                 m = rx.search(l)
                 if not m or (r.get("skipPlaceholders") and self._placeholder(m.group(0))):
                     continue
-                self.add("RD008", r["severity"], rel, i + 1, f"[{r['framework']}] {r['name']}", r["fix"])
+                self.add("RD008", r["severity"], rel, i + 1, f"[{r['framework']}] {r['name']}", r["fix"],
+                         {"check": r["id"], "cwe": r.get("cwe"), "owasp": r.get("owasp")})
 
     def eol_finding(self, rel: str, line: int, product: str, ver: str) -> None:
         d = self.cycles.get(f"{product}:{ver}")
@@ -502,9 +517,12 @@ def scan(root: str, today: date | None = None, extra_blocklist: list | None = No
             e.check_mcp(rel, text)
         if "/.github/workflows/" in "/" + rel and ext in (".yml", ".yaml"):
             e.check_workflow(rel, text)
+            check_workflow_risk(e, rel, text)
     e.findings.sort(key=lambda f: (f["file"], f["line"], f["rule"], f["message"]))
+    fingerprint_all(e.findings, root)
     summary = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
     for f in e.findings:
         summary[f["severity"]] += 1
+    # baselined / baselineStale / since are filled in by apply_baseline() and filter_since() (see baseline.py)
     return {"tool": "riskdebt", "version": VERSION, "root": root, "scanned": scanned, "skipped": e.skipped,
-            "findings": e.findings, "summary": summary}
+            "baselined": 0, "baselineStale": 0, "findings": e.findings, "summary": summary}
