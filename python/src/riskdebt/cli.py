@@ -5,7 +5,9 @@ import os
 import re
 import sys
 from datetime import date
+from pathlib import Path
 
+from .baseline import DEFAULT_BASELINE_FILE, apply_baseline, filter_since, load_baseline, new_baseline
 from .sarif import to_sarif
 from .scanner import VERSION, rank, scan
 
@@ -21,6 +23,10 @@ Options:
       --exclude <pattern>    skip paths, .gitignore-style (repeatable); also reads .riskdebtignore
       --no-gitignore         do not read .gitignore (it is honoured by default)
       --max-size <KB>        skip files larger than this (default 1024)
+      --since <git-ref>      only report findings on lines changed since this ref (what a pull request adds)
+      --write-baseline <file>  save every current finding as known, then exit 0
+      --baseline <file>      hide the findings listed in this baseline (default: .riskdebt-baseline.json if present)
+      --no-baseline          ignore the default baseline file
   -v, --version              print version
   -h, --help                 show this help
 """
@@ -39,6 +45,10 @@ def main(argv: list[str] | None = None) -> int:
     exclude: list[str] = []
     no_gitignore = False
     max_size = None
+    since = ""
+    baseline_path = ""
+    write_baseline = ""
+    no_baseline = False
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -74,6 +84,14 @@ def main(argv: list[str] | None = None) -> int:
             if not v.isdigit() or int(v) <= 0:
                 _die("--max-size must be a positive number of KB")
             max_size = int(v)
+        elif a == "--since":
+            since = nxt()
+        elif a == "--baseline":
+            baseline_path = nxt()
+        elif a == "--write-baseline":
+            write_baseline = nxt()
+        elif a == "--no-baseline":
+            no_baseline = True
         elif a == "--blocklist":
             try:
                 with open(nxt(), encoding="utf-8") as fh:
@@ -90,8 +108,29 @@ def main(argv: list[str] | None = None) -> int:
         _die("--format must be text, json or sarif")
     if fail_on != "none" and rank(fail_on) < 0:
         _die("--fail-on must be critical|high|medium|low|none")
+    if write_baseline and (since or baseline_path):
+        _die("--write-baseline records the full scan; do not combine it with --since or --baseline")
 
     res = scan(root, today=today, extra_blocklist=extra, no_gitignore=no_gitignore, max_size_kb=max_size, exclude=exclude)
+
+    if write_baseline:
+        Path(write_baseline).write_text(json.dumps(new_baseline(res, VERSION), indent=2) + "\n", encoding="utf-8")
+        print(f"Baseline written: {len(res['findings'])} findings -> {write_baseline}")
+        return 0
+    try:
+        if not no_baseline:
+            path = baseline_path
+            if not path:
+                default = Path(root) / DEFAULT_BASELINE_FILE
+                if default.is_file():
+                    path = str(default)
+            if path:
+                apply_baseline(res, load_baseline(path))
+        if since:
+            filter_since(res, root, since)
+    except ValueError as err:
+        _die(str(err))
+
     if fmt == "sarif":
         print(json.dumps(to_sarif(res), indent=2))
     elif fmt == "json":
@@ -112,9 +151,19 @@ def _print_text(r: dict) -> None:
 
     sk = r["skipped"]
     print(f"riskdebt {r['version']} - scanned {r['scanned']} files in {r['root']} "
-          f"(skipped {sk['dirs']} folders, {sk['files']} files: ignored, binary or too large)\n")
+          f"(skipped {sk['dirs']} folders, {sk['files']} files: ignored, binary or too large)")
+    if r.get("since"):
+        print(f"diff-only: findings on lines changed since {r['since']}")
+    if r["baselined"] > 0 or r["baselineStale"] > 0:
+        line = f"baseline: {r['baselined']} known findings hidden"
+        if r["baselineStale"] > 0:
+            line += f", {r['baselineStale']} entries no longer match (refresh with --write-baseline)"
+        print(line)
+    print()
     for f in r["findings"]:
-        print(f"{paint(colors[f['severity']], f['severity'].upper().ljust(8))} {f['rule']}  {f['file']}:{f['line']}")
+        tags = [*f["cwe"], *f["owasp"]]
+        suffix = f"  [{' · '.join(tags)}]" if tags else ""
+        print(f"{paint(colors[f['severity']], f['severity'].upper().ljust(8))} {f['rule']}  {f['file']}:{f['line']}{suffix}")
         print(f"  problem: {f['message']}")
         print(f"  fix:     {f['fix']}\n")
     s = r["summary"]

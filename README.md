@@ -58,6 +58,18 @@ This week's headlines repeat the same story: a popular AI library was compromise
 | RD006 | Risky AI-agent / MCP configuration | Claude Code, Cursor, VS Code MCP |
 | RD007 | GitHub Actions not pinned to a commit SHA | GitHub Actions |
 | RD008 | Insecure code patterns, with framework-specific fixes | **Angular, React, .NET, Node.js, PHP, Python** |
+| RD009 | GitHub Actions hardening: `pull_request_target` checking out PR code, script injection, `write-all` or missing `permissions`, `curl \| sh` | GitHub Actions |
+
+### Mapped to the standards your auditors use
+
+Every finding carries its **CWE** and **OWASP** ids (OWASP [Top 10:2025](https://owasp.org/Top10/), e.g. `A05:2025`, and the [Top 10 for LLM applications](https://genai.owasp.org/), e.g. `LLM06:2025`), in the text report, in `--format json`, and in SARIF, where GitHub shows the CWE next to each alert and uses a 0-10 `security-severity` for the critical/high/medium/low label.
+
+```text
+HIGH     RD008  user.component.ts:6  [CWE-79 · A05:2025]
+  problem: [Angular] bypassSecurityTrust* disables Angular's sanitizer (XSS)
+```
+
+The mapping is the closest fit, not a certification: use it to group and report, and check the category yourself before quoting it in an audit.
 
 ### Framework coverage (RD008)
 
@@ -102,6 +114,21 @@ riskdebt [path] [options]
 
 Add `// riskdebt-ignore` (any comment style) on a line to suppress a secret or code-pattern finding there.
 
+### Adopt it on an existing codebase: baseline and diff-only
+
+A first scan of a mature repo can show hundreds of old findings. Two features let a team adopt riskdebt without fixing the past first:
+
+```bash
+riskdebt . --write-baseline .riskdebt-baseline.json   # record everything that exists today (commit this file)
+riskdebt .                                            # from now on only NEW findings are shown (the file is read automatically)
+riskdebt . --since origin/main                        # in a pull request: only findings on lines the PR changed
+```
+
+- A finding is identified by its rule, file and the **text** of the offending line, not its line number, so it stays "known" when code above it moves, and becomes new if the offending line itself changes.
+- The report says how many known findings are hidden and how many baseline entries no longer match anything (refresh the file with `--write-baseline` to prune them). `--no-baseline` shows everything again.
+- `--since <ref>` reads `git diff`; it needs git history (in GitHub Actions use `fetch-depth: 0`). It also counts untracked files, and keeps file-level findings (such as a missing lockfile) of any file that changed.
+- A baseline written by the Go, Node.js or Python build works with the other two.
+
 ### Large repositories
 
 riskdebt is built for big monorepos: it never reads what it should not, and tells you what it skipped.
@@ -124,6 +151,17 @@ steps:
   - uses: oriebalzyuot96/riskdebt@main   # pin to a release tag or commit SHA
     with:
       fail-on: high
+```
+
+On pull requests, gate only on what the PR adds (the code-scanning upload still contains the full results):
+
+```yaml
+  - uses: actions/checkout@v4
+    with:
+      fetch-depth: 0
+  - uses: oriebalzyuot96/riskdebt@main
+    with:
+      since: origin/${{ github.base_ref }}
 ```
 
 Findings show up as alerts in **Security → Code scanning**, each with its fix. Or output SARIF yourself: `riskdebt . --format sarif > riskdebt.sarif`.

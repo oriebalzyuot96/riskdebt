@@ -1,10 +1,11 @@
 {
-  "RD001": {"name": "unpinned-dependency", "fix": "Pin exact versions (e.g. \"1.2.3\"), commit a lockfile, and let Dependabot/Renovate propose upgrades through reviewed pull requests."},
-  "RD002": {"name": "missing-lockfile", "fix": "Commit package-lock.json / yarn.lock / pnpm-lock.yaml and install with `npm ci`. For Python use `pip-compile --generate-hashes` + `pip install --require-hashes`, or uv/poetry lock files."},
-  "RD003": {"name": "known-compromised-package", "fix": "Remove or upgrade immediately, rotate every secret reachable from machines or CI that installed it, and review lockfile history for when it entered."},
-  "RD004": {"name": "hardcoded-secret", "fix": "Remove it from source, revoke/rotate the credential now (assume it leaked, git history included), and load it from an environment variable or a secret manager. Add a secret-scanning pre-commit hook."},
-  "RD005": {"name": "end-of-life-runtime", "fix": "Upgrade to a supported release. If you cannot yet, isolate the service, add virtual patching (WAF rules) and set a dated retirement plan."},
-  "RD006": {"name": "ai-agent-config-risk", "fix": "Apply least privilege: allow only specific commands, keep human approval for sensitive actions, pin MCP server versions, and reference secrets as ${ENV_VAR} instead of literals."},
-  "RD007": {"name": "unpinned-github-action", "fix": "Pin third-party actions to a full 40-character commit SHA (keep a `# v4.1.0` comment) and let Dependabot update them."},
-  "RD008": {"name": "insecure-code-pattern", "fix": "See the per-finding fix."}
+  "RD001": {"name":"unpinned-dependency","fix":"Pin exact versions (e.g. \"1.2.3\"), commit a lockfile, and let Dependabot/Renovate propose upgrades through reviewed pull requests.","cwe":["CWE-1357"],"owasp":["A03:2025"]},
+  "RD002": {"name":"missing-lockfile","fix":"Commit package-lock.json / yarn.lock / pnpm-lock.yaml and install with `npm ci`. For Python use `pip-compile --generate-hashes` + `pip install --require-hashes`, or uv/poetry lock files.","cwe":["CWE-494"],"owasp":["A03:2025","A08:2025"]},
+  "RD003": {"name":"known-compromised-package","fix":"Remove or upgrade immediately, rotate every secret reachable from machines or CI that installed it, and review lockfile history for when it entered.","cwe":["CWE-506"],"owasp":["A03:2025"]},
+  "RD004": {"name":"hardcoded-secret","fix":"Remove it from source, revoke/rotate the credential now (assume it leaked, git history included), and load it from an environment variable or a secret manager. Add a secret-scanning pre-commit hook.","cwe":["CWE-798"],"owasp":["A07:2025"]},
+  "RD005": {"name":"end-of-life-runtime","fix":"Upgrade to a supported release. If you cannot yet, isolate the service, add virtual patching (WAF rules) and set a dated retirement plan.","cwe":["CWE-1104"],"owasp":["A03:2025"]},
+  "RD006": {"name":"ai-agent-config-risk","fix":"Apply least privilege: allow only specific commands, keep human approval for sensitive actions, pin MCP server versions, and reference secrets as ${ENV_VAR} instead of literals.","cwe":["CWE-250"],"owasp":["A06:2025","LLM06:2025"]},
+  "RD007": {"name":"unpinned-github-action","fix":"Pin third-party actions to a full 40-character commit SHA (keep a `# v4.1.0` comment) and let Dependabot update them.","cwe":["CWE-829"],"owasp":["A03:2025","A08:2025"]},
+  "RD008": {"name":"insecure-code-pattern","fix":"See the per-finding fix.","cwe":["CWE-1357"],"owasp":["A05:2025"]},
+  "RD009": {"name":"github-actions-workflow-risk","fix":"Run untrusted pull-request code only without secrets, put untrusted values in env: and quote them in the script, give the workflow the least permissions it needs (permissions: contents: read), and never pipe a download into a shell.","cwe":["CWE-829"],"owasp":["A03:2025","A08:2025"]}
 }
