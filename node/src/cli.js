@@ -11,6 +11,9 @@ Options:
       --fail-on <severity>   exit 1 at or above: critical|high|medium|low|none (default high)
       --today <YYYY-MM-DD>   override today's date (for reproducible EOL checks)
       --blocklist <file>     extra compromised-package list (JSON)
+      --exclude <pattern>    skip paths, .gitignore-style (repeatable); also reads .riskdebtignore
+      --no-gitignore         do not read .gitignore (it is honoured by default)
+      --max-size <KB>        skip files larger than this (default 1024)
   -v, --version              print version
   -h, --help                 show this help
 `;
@@ -53,6 +56,18 @@ export function main(argv) {
         opts.today = Date.parse(v);
         break;
       }
+      case '--exclude':
+        (opts.exclude ||= []).push(next());
+        break;
+      case '--no-gitignore':
+        opts.noGitignore = true;
+        break;
+      case '--max-size': {
+        const kb = Number(next());
+        if (!Number.isInteger(kb) || kb <= 0) die('--max-size must be a positive number of KB');
+        opts.maxSizeKB = kb;
+        break;
+      }
       case '--blocklist':
         try {
           opts.extraBlocklist = JSON.parse(fs.readFileSync(next(), 'utf8'));
@@ -79,7 +94,7 @@ function printText(r) {
   const color = process.stdout.isTTY && !process.env.NO_COLOR;
   const paint = (code, s) => (color ? `\x1b[${code}m${s}\x1b[0m` : s);
   const colors = { critical: '1;31', high: '31', medium: '33', low: '36', info: '2' };
-  console.log(`riskdebt ${r.version} - scanned ${r.scanned} files in ${r.root}\n`);
+  console.log(`riskdebt ${r.version} - scanned ${r.scanned} files in ${r.root} (skipped ${r.skipped.dirs} folders, ${r.skipped.files} files: ignored, binary or too large)\n`);
   for (const f of r.findings) {
     console.log(`${paint(colors[f.severity], f.severity.toUpperCase().padEnd(8))} ${f.rule}  ${f.file}:${f.line}`);
     console.log(`  problem: ${f.message}`);

@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -45,6 +46,55 @@ func TestFrameworkAndSupplyChainDetections(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("no finding mentioning %s", w)
+		}
+	}
+}
+
+func findingKeys(t *testing.T, dir string) []string {
+	t.Helper()
+	r, err := Scan(dir, Options{Today: today})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, f := range r.Findings {
+		keys = append(keys, fmt.Sprintf("%s|%s|%d|%s", f.Rule, f.File, f.Line, f.Message))
+	}
+	return keys
+}
+
+// Hints are a speed optimisation only: the findings must be identical with and without them.
+func TestHintsNeverHideAFinding(t *testing.T) {
+	for _, dir := range []string{"vulnerable-app", "clean-app", "ignore-app"} {
+		path := "../../fixtures/" + dir
+		with := findingKeys(t, path)
+		disableHints = true
+		without := findingKeys(t, path)
+		disableHints = false
+		if strings.Join(with, "\n") != strings.Join(without, "\n") {
+			t.Errorf("%s: findings differ with and without hints\nwith:\n%s\nwithout:\n%s", dir, strings.Join(with, "\n"), strings.Join(without, "\n"))
+		}
+	}
+}
+
+func TestEveryRuleHasHints(t *testing.T) {
+	e, err := newEngine(Options{Today: today})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range e.secrets {
+		if len(r.Hints) == 0 {
+			t.Errorf("secret rule %s has no hints", r.ID)
+		}
+	}
+	for _, r := range e.patterns {
+		if len(r.Hints) == 0 {
+			t.Errorf("pattern rule %s has no hints", r.ID)
+		}
+		for _, h := range r.Hints {
+			if h != strings.ToLower(h) {
+				t.Errorf("pattern rule %s: hint %q must be lower-case", r.ID, h)
+			}
 		}
 	}
 }

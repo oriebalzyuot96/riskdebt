@@ -15,7 +15,7 @@ const impls = {
 };
 
 let failed = false;
-for (const fixture of ['vulnerable-app', 'clean-app']) {
+for (const fixture of ['vulnerable-app', 'clean-app', 'ignore-app']) {
   const results = {};
   for (const [name, [cmd, base]] of Object.entries(impls)) {
     const env = { ...process.env, PYTHONPATH: path.join(root, 'python', 'src') };
@@ -29,7 +29,7 @@ for (const fixture of ['vulnerable-app', 'clean-app']) {
       process.exit(1);
     }
     const out = JSON.parse(r.stdout);
-    results[name] = out.findings.map((f) => `${f.rule}|${f.severity}|${f.file}:${f.line}`);
+    results[name] = [`skipped:${out.skipped.dirs}/${out.skipped.files}`, ...out.findings.map((f) => `${f.rule}|${f.severity}|${f.file}:${f.line}`)];
     const s = spawnSync(cmd, [...base, `fixtures/${fixture}`, '--format', 'sarif', '--today', '2026-10-23', '--fail-on', 'none'], { cwd: root, env, encoding: 'utf8' });
     const sarif = JSON.parse(s.stdout);
     const sr = sarif.runs[0].results.map((x) => `${x.ruleId}|${x.locations[0].physicalLocation.artifactLocation.uri}:${x.locations[0].physicalLocation.region.startLine}`);
@@ -46,7 +46,7 @@ for (const fixture of ['vulnerable-app', 'clean-app']) {
   const ref = JSON.stringify(results.go);
   for (const name of Object.keys(results)) {
     const same = JSON.stringify(results[name]) === ref;
-    console.log(`${fixture.padEnd(15)} ${name.padEnd(7)} ${results[name].length} findings ${same ? 'OK' : 'MISMATCH'}`);
+    console.log(`${fixture.padEnd(15)} ${name.padEnd(7)} ${results[name].length - 1} findings ${same ? 'OK' : 'MISMATCH'}`);
     if (!same) {
       failed = true;
       const a = new Set(results.go);

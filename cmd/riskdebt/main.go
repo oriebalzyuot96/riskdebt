@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/oriebalzyuot96/riskdebt/internal/scanner"
@@ -18,6 +19,9 @@ Options:
       --fail-on <severity>   exit 1 at or above: critical|high|medium|low|none (default high)
       --today <YYYY-MM-DD>   override today's date (for reproducible EOL checks)
       --blocklist <file>     extra compromised-package list (JSON)
+      --exclude <pattern>    skip paths, .gitignore-style (repeatable); also reads .riskdebtignore
+      --no-gitignore         do not read .gitignore (it is honoured by default)
+      --max-size <KB>        skip files larger than this (default 1024)
   -v, --version              print version
   -h, --help                 show this help
 `
@@ -57,6 +61,16 @@ func main() {
 				die("--today must be YYYY-MM-DD")
 			}
 			opts.Today = t
+		case "--exclude":
+			opts.Exclude = append(opts.Exclude, next())
+		case "--no-gitignore":
+			opts.NoGitignore = true
+		case "--max-size":
+			kb, err := strconv.Atoi(next())
+			if err != nil || kb <= 0 {
+				die("--max-size must be a positive number of KB")
+			}
+			opts.MaxSizeKB = kb
 		case "--blocklist":
 			data, err := os.ReadFile(next())
 			if err != nil {
@@ -110,7 +124,7 @@ func printText(r *scanner.Result) {
 		return "\x1b[" + code + "m" + s + "\x1b[0m"
 	}
 	colors := map[string]string{"critical": "1;31", "high": "31", "medium": "33", "low": "36", "info": "2"}
-	fmt.Printf("riskdebt %s - scanned %d files in %s\n\n", r.Version, r.Scanned, r.Root)
+	fmt.Printf("riskdebt %s - scanned %d files in %s (skipped %d folders, %d files: ignored, binary or too large)\n\n", r.Version, r.Scanned, r.Root, r.Skipped.Dirs, r.Skipped.Files)
 	for _, f := range r.Findings {
 		fmt.Printf("%s %s  %s:%d\n", paint(colors[f.Severity], fmt.Sprintf("%-8s", upper(f.Severity))), f.Rule, f.File, f.Line)
 		fmt.Printf("  problem: %s\n", f.Message)

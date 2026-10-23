@@ -95,9 +95,21 @@ riskdebt [path] [options]
       --fail-on <severity>   exit 1 at or above critical|high|medium|low|none (default high)
       --today <YYYY-MM-DD>   reproducible EOL checks
       --blocklist <file>     add your own compromised-package list
+      --exclude <pattern>    skip paths, .gitignore-style (repeatable)
+      --no-gitignore         do not read .gitignore (honoured by default)
+      --max-size <KB>        skip files larger than this (default 1024)
 ```
 
 Add `// riskdebt-ignore` (any comment style) on a line to suppress a secret or code-pattern finding there.
+
+### Large repositories
+
+riskdebt is built for big monorepos: it never reads what it should not, and tells you what it skipped.
+
+- **`.gitignore` is honoured** (build output, caches and local files are usually in it), plus an optional **`.riskdebtignore`** in the scan root with the same syntax (`dir/`, `*.log`, `/root-only`, `**/generated/`; negation is not supported). Add more on the command line with `--exclude 'models/'`, or turn `.gitignore` off with `--no-gitignore`.
+- **Skipped by default:** `node_modules`, `.git`, `dist`, `build`, `bin`, `obj`, `.next`, `.angular`, `.nuxt`, `coverage`, `.cache` and similar; minified files and source maps; and binary, media and **machine-learning model files** (`.onnx`, `.gguf`, `.safetensors`, `.pt`, `.h5`, `.pkl`, `.parquet` and more). Files over 1 MB and single lines over 4000 characters (minified bundles) are skipped too.
+- **Nothing is skipped silently:** the first line of the report says how many folders and files were skipped, and `--format json` has a `skipped` object. A clean result on a repo where most files were skipped is not full coverage.
+- **Fast:** each rule carries `hints` (keywords every match must contain), so a regex only runs on files and lines that could match. The Go build also scans files in parallel. On a 37,000-file .NET and Angular monorepo, a scan that did not finish in 3 minutes before now takes about 5 seconds (Go). The hints can never hide a finding; a test proves it.
 
 ### In GitHub Actions (with code-scanning alerts)
 

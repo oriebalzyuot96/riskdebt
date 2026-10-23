@@ -9,6 +9,8 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .ignore import BUILTIN_IGNORES, matches, parse_ignore_line, parse_ignore_text
+
 VERSION = "0.1.1"
 
 _RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
@@ -35,10 +37,20 @@ def _compile(p: str, flags: str = "") -> re.Pattern[str]:
     return re.compile(p, re.I if "i" in flags else 0)
 
 
-SKIP_DIRS = {".git", "node_modules", "vendor", "dist", "build", "__pycache__", ".venv", "venv", "target", "bin", "obj"}
+SKIP_DIRS = {".git", "node_modules", "vendor", "dist", "build", "__pycache__", ".venv", "venv", "target", "bin", "obj",
+             ".next", ".nuxt", ".angular", ".svelte-kit", ".turbo", ".cache", "coverage", ".gradle", ".idea", ".vs",
+             ".terraform", ".tox", ".mypy_cache", ".pytest_cache", ".parcel-cache", "bower_components", "out"}
 BINARY_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip", ".gz", ".tar", ".woff", ".woff2",
-               ".ttf", ".eot", ".mp4", ".mp3", ".exe", ".dll", ".so", ".wasm"}
-MAX_FILE_SIZE = 1 << 20
+               ".ttf", ".eot", ".mp4", ".mp3", ".exe", ".dll", ".so", ".wasm",
+               # machine-learning models and datasets (often gigabytes)
+               ".onnx", ".gguf", ".ggml", ".safetensors", ".pt", ".pth", ".ckpt", ".h5", ".hdf5", ".pb", ".tflite",
+               ".npy", ".npz", ".pkl", ".pickle", ".joblib", ".bin", ".model", ".weights", ".parquet", ".feather",
+               # databases, media, archives, compiled output
+               ".db", ".sqlite", ".sqlite3", ".mdb", ".mov", ".avi", ".mkv", ".webm", ".wav", ".flac", ".ogg", ".bmp",
+               ".tiff", ".psd", ".otf", ".7z", ".rar", ".jar", ".class", ".pyc", ".iso", ".dmg"}
+DEFAULT_MAX_SIZE_KB = 1024
+# Skips minified one-line bundles: no human wrote them and the regexes are slow on them.
+MAX_LINE_LEN = 4000
 
 
 def _ext(base: str) -> str:
@@ -120,6 +132,9 @@ class Engine:
         self.blocklist = _load(d, "compromised.json") + (extra_blocklist or [])
         self.today = today
         self.files: set[str] = set()
+        self.ignores: list = []
+        self.max_size = DEFAULT_MAX_SIZE_KB * 1024
+        self.skipped = {"dirs": 0, "files": 0}
         self.findings: list[dict] = []
 
     def add(self, rule: str, severity: str, file: str, line: int, message: str, fix: str = "") -> None:
@@ -209,11 +224,19 @@ class Engine:
                 self.add("RD001", "medium", rel, i + 1, f'NuGet package "{m.group(1)}" uses the floating version "{m.group(2)}"',
                          "Pin an exact version, enable lock files (<RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>) and restore with --locked-mode.")
 
-    def check_secrets(self, rel: str, text: str) -> None:
+    # lower is the lower-cased file text. A rule is only run on a file (and then a line) that contains one of its
+    # hints, because a regex match always lies inside a single line and contains a hint.
+    def check_secrets(self, rel: str, text: str, lower: str) -> None:
+        active = [(r, rx) for r, rx in self.secrets if _has_hint(lower, r.get("hints"))]
+        if not active:
+            return
+        lower_lines = lower.split("\n")
         for i, l in enumerate(text.split("\n")):
-            if "riskdebt-ignore" in l:
+            if len(l) > MAX_LINE_LEN or "riskdebt-ignore" in l:
                 continue
-            for r, rx in self.secrets:
+            for r, rx in active:
+                if i < len(lower_lines) and not _has_hint(lower_lines[i], r.get("hints")):
+                    continue
                 m = rx.search(l)
                 if not m:
                     continue
@@ -221,14 +244,17 @@ class Engine:
                     continue
                 self.add("RD004", r["severity"], rel, i + 1, f"Possible {r['name']} committed to source")
 
-    def check_patterns(self, rel: str, ext: str, text: str) -> None:
-        active = [(r, rx) for r, rx in self.patterns if ext in r["exts"]]
+    def check_patterns(self, rel: str, ext: str, text: str, lower: str) -> None:
+        active = [(r, rx) for r, rx in self.patterns if ext in r["exts"] and _has_hint(lower, r.get("hints"))]
         if not active:
             return
+        lower_lines = lower.split("\n")
         for i, l in enumerate(text.split("\n")):
-            if "riskdebt-ignore" in l:
+            if len(l) > MAX_LINE_LEN or "riskdebt-ignore" in l:
                 continue
             for r, rx in active:
+                if i < len(lower_lines) and not _has_hint(lower_lines[i], r.get("hints")):
+                    continue
                 m = rx.search(l)
                 if not m or (r.get("skipPlaceholders") and self._placeholder(m.group(0))):
                     continue
@@ -326,22 +352,54 @@ class Engine:
                          f'Action {m.group(1)} is not pinned to a commit SHA (ref "{ref}" can be moved by its owner)')
 
 
-def _walk(root: Path, d: Path, out: list) -> None:
-    for entry in sorted(os.scandir(d), key=lambda e: e.name):
+def _load_ignores(e: Engine, root: Path, no_gitignore: bool, exclude: list | None, max_size_kb: int | None) -> None:
+    for p in BUILTIN_IGNORES:
+        e.ignores.append(parse_ignore_line(p))
+    names = [".riskdebtignore"] + ([] if no_gitignore else [".gitignore"])
+    for name in names:
+        try:
+            e.ignores.extend(parse_ignore_text((root / name).read_text(encoding="utf-8", errors="replace")))
+        except OSError:
+            pass
+    for p in exclude or []:
+        r = parse_ignore_line(p)
+        if r:
+            e.ignores.append(r)
+    e.max_size = (max_size_kb if max_size_kb and max_size_kb > 0 else DEFAULT_MAX_SIZE_KB) * 1024
+
+
+def _ignored(e: Engine, rel: str, base: str, is_dir: bool) -> bool:
+    return any(matches(r, rel, base, is_dir) for r in e.ignores)
+
+
+def _has_hint(lower: str, hints: list | None) -> bool:
+    return not hints or any(h in lower for h in hints)
+
+
+def _walk(e: Engine, root: Path, d: Path, out: list) -> None:
+    for entry in sorted(os.scandir(d), key=lambda x: x.name):
+        rel = Path(entry.path).relative_to(root).as_posix()
         if entry.is_dir(follow_symlinks=False):
-            if entry.name not in SKIP_DIRS:
-                _walk(root, Path(entry.path), out)
+            if entry.name in SKIP_DIRS or _ignored(e, rel, entry.name, True):
+                e.skipped["dirs"] += 1
+            else:
+                _walk(e, root, Path(entry.path), out)
         elif entry.is_file(follow_symlinks=False):
-            out.append((Path(entry.path).relative_to(root).as_posix(), Path(entry.path)))
+            if _ignored(e, rel, entry.name, False):
+                e.skipped["files"] += 1
+            else:
+                out.append((rel, Path(entry.path)))
 
 
-def scan(root: str, today: date | None = None, extra_blocklist: list | None = None) -> dict:
+def scan(root: str, today: date | None = None, extra_blocklist: list | None = None,
+         no_gitignore: bool = False, max_size_kb: int | None = None, exclude: list | None = None) -> dict:
     if today is None:
         today = datetime.now(timezone.utc).date()
     e = Engine(today, extra_blocklist)
     rootp = Path(root)
+    _load_ignores(e, rootp, no_gitignore, exclude, max_size_kb)
     items: list = []
-    _walk(rootp, rootp, items)
+    _walk(e, rootp, rootp, items)
     for rel, _ in items:
         e.files.add(rel)
     scanned = 0
@@ -351,14 +409,18 @@ def scan(root: str, today: date | None = None, extra_blocklist: list | None = No
         if base == "Dockerfile" or base.startswith("Dockerfile."):
             ext = ".dockerfile"
         if ext in BINARY_EXTS:
+            e.skipped["files"] += 1
             continue
         try:
-            if abs_.stat().st_size > MAX_FILE_SIZE:
+            if abs_.stat().st_size > e.max_size:
+                e.skipped["files"] += 1
                 continue
             data = abs_.read_bytes()
         except OSError:
+            e.skipped["files"] += 1
             continue
         if b"\x00" in data[:8000]:
+            e.skipped["files"] += 1
             continue
         text = data.decode("utf-8", errors="replace")
         scanned += 1
@@ -370,8 +432,9 @@ def scan(root: str, today: date | None = None, extra_blocklist: list | None = No
             e.check_requirements(rel, text)
         elif ext == ".csproj":
             e.check_csproj(rel, text)
-        e.check_secrets(rel, text)
-        e.check_patterns(rel, ext, text)
+        lower = text.lower()
+        e.check_secrets(rel, text, lower)
+        e.check_patterns(rel, ext, text, lower)
         e.check_eol(rel, base, text)
         if _ends_with_path(rel, ".claude/settings.json") or _ends_with_path(rel, ".claude/settings.local.json"):
             e.check_claude_settings(rel, text)
@@ -383,5 +446,5 @@ def scan(root: str, today: date | None = None, extra_blocklist: list | None = No
     summary = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
     for f in e.findings:
         summary[f["severity"]] += 1
-    return {"tool": "riskdebt", "version": VERSION, "root": root, "scanned": scanned,
+    return {"tool": "riskdebt", "version": VERSION, "root": root, "scanned": scanned, "skipped": e.skipped,
             "findings": e.findings, "summary": summary}

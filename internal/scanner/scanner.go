@@ -12,10 +12,15 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/oriebalzyuot96/riskdebt/rules"
 )
+
+// disableHints is set by tests to prove the hints are only an optimisation: they must never hide a finding.
+var disableHints bool
 
 const Version = "0.1.1"
 
@@ -44,8 +49,15 @@ type Result struct {
 	Version  string         `json:"version"`
 	Root     string         `json:"root"`
 	Scanned  int            `json:"scanned"`
+	Skipped  Skipped        `json:"skipped"`
 	Findings []Finding      `json:"findings"`
 	Summary  map[string]int `json:"summary"`
+}
+
+// Skipped counts what the walk deliberately did not read, so a clean result is never mistaken for full coverage.
+type Skipped struct {
+	Dirs  int `json:"dirs"`
+	Files int `json:"files"`
 }
 
 type CompromisedEntry struct {
@@ -58,6 +70,9 @@ type CompromisedEntry struct {
 type Options struct {
 	Today          time.Time
 	ExtraBlocklist []CompromisedEntry
+	NoGitignore    bool     // do not read the root .gitignore
+	MaxSizeKB      int      // skip files larger than this (default 1024)
+	Exclude        []string // extra .gitignore-style patterns
 }
 
 type metaEntry struct {
@@ -66,12 +81,13 @@ type metaEntry struct {
 }
 
 type secretRule struct {
-	ID               string `json:"id"`
-	Name             string `json:"name"`
-	Pattern          string `json:"pattern"`
-	Flags            string `json:"flags"`
-	Severity         string `json:"severity"`
-	SkipPlaceholders bool   `json:"skipPlaceholders"`
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	Pattern          string   `json:"pattern"`
+	Flags            string   `json:"flags"`
+	Severity         string   `json:"severity"`
+	SkipPlaceholders bool     `json:"skipPlaceholders"`
+	Hints            []string `json:"hints"`
 	re               *regexp.Regexp
 }
 
@@ -85,6 +101,7 @@ type patternRule struct {
 	Severity         string   `json:"severity"`
 	SkipPlaceholders bool     `json:"skipPlaceholders"`
 	Fix              string   `json:"fix"`
+	Hints            []string `json:"hints"`
 	re               *regexp.Regexp
 }
 
@@ -98,6 +115,10 @@ type engine struct {
 	today        time.Time
 	files        map[string]bool
 	findings     []Finding
+	ignores      []ignoreRule
+	maxSize      int64
+	skipped      Skipped
+	mu           sync.Mutex // guards findings and skipped while files are scanned in parallel
 }
 
 func compile(p, flags string) *regexp.Regexp {
@@ -121,6 +142,11 @@ func newEngine(opts Options) (*engine, error) {
 	}
 	e.placeholders = sf.Placeholders
 	e.secrets = sf.Patterns
+	if disableHints {
+		for i := range e.secrets {
+			e.secrets[i].Hints = nil
+		}
+	}
 	for i := range e.secrets {
 		e.secrets[i].re = compile(e.secrets[i].Pattern, e.secrets[i].Flags)
 	}
@@ -128,6 +154,9 @@ func newEngine(opts Options) (*engine, error) {
 		return nil, err
 	}
 	for i := range e.patterns {
+		if disableHints {
+			e.patterns[i].Hints = nil
+		}
 		e.patterns[i].re = compile(e.patterns[i].Pattern, e.patterns[i].Flags)
 	}
 	var ef struct {
@@ -144,7 +173,15 @@ func newEngine(opts Options) (*engine, error) {
 	return e, nil
 }
 
+func (e *engine) skip() {
+	e.mu.Lock()
+	e.skipped.Files++
+	e.mu.Unlock()
+}
+
 func (e *engine) add(rule, severity, file string, line int, message, fix string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if fix == "" {
 		fix = e.meta[rule].Fix
 	}
@@ -157,15 +194,29 @@ func (e *engine) add(rule, severity, file string, line int, message, fix string)
 var skipDirs = map[string]bool{
 	".git": true, "node_modules": true, "vendor": true, "dist": true, "build": true,
 	"__pycache__": true, ".venv": true, "venv": true, "target": true, "bin": true, "obj": true,
+	".next": true, ".nuxt": true, ".angular": true, ".svelte-kit": true, ".turbo": true, ".cache": true,
+	"coverage": true, ".gradle": true, ".idea": true, ".vs": true, ".terraform": true, ".tox": true,
+	".mypy_cache": true, ".pytest_cache": true, ".parcel-cache": true, "bower_components": true, "out": true,
 }
 
 var binaryExts = map[string]bool{
 	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true, ".ico": true, ".pdf": true,
 	".zip": true, ".gz": true, ".tar": true, ".woff": true, ".woff2": true, ".ttf": true, ".eot": true,
 	".mp4": true, ".mp3": true, ".exe": true, ".dll": true, ".so": true, ".wasm": true,
+	// machine-learning models and datasets (often gigabytes)
+	".onnx": true, ".gguf": true, ".ggml": true, ".safetensors": true, ".pt": true, ".pth": true, ".ckpt": true,
+	".h5": true, ".hdf5": true, ".pb": true, ".tflite": true, ".npy": true, ".npz": true, ".pkl": true,
+	".pickle": true, ".joblib": true, ".bin": true, ".model": true, ".weights": true, ".parquet": true, ".feather": true,
+	// databases, media, archives, compiled output
+	".db": true, ".sqlite": true, ".sqlite3": true, ".mdb": true, ".mov": true, ".avi": true, ".mkv": true,
+	".webm": true, ".wav": true, ".flac": true, ".ogg": true, ".bmp": true, ".tiff": true, ".psd": true,
+	".otf": true, ".7z": true, ".rar": true, ".jar": true, ".class": true, ".pyc": true, ".iso": true, ".dmg": true,
 }
 
-const maxFileSize = 1 << 20
+// maxLineLen skips minified one-line bundles: no human wrote them and the regexes are slow on them.
+const maxLineLen = 4000
+
+const defaultMaxSizeKB = 1024
 
 func extOf(base string) string {
 	i := strings.LastIndex(base, ".")
@@ -376,12 +427,38 @@ func (e *engine) checkCsproj(rel, text string) {
 	}
 }
 
-func (e *engine) checkSecrets(rel, text string) {
+// hasHint reports whether a rule can possibly match a file: lower is the lower-cased file text.
+func hasHint(lower string, hints []string) bool {
+	if len(hints) == 0 {
+		return true
+	}
+	for _, h := range hints {
+		if strings.Contains(lower, h) {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *engine) checkSecrets(rel, text, lower string) {
+	var active []*secretRule
+	for i := range e.secrets {
+		if hasHint(lower, e.secrets[i].Hints) {
+			active = append(active, &e.secrets[i])
+		}
+	}
+	if len(active) == 0 {
+		return
+	}
+	lowerLines := strings.Split(lower, "\n")
 	for i, l := range strings.Split(text, "\n") {
-		if strings.Contains(l, "riskdebt-ignore") {
+		if len(l) > maxLineLen || strings.Contains(l, "riskdebt-ignore") {
 			continue
 		}
-		for _, r := range e.secrets {
+		for _, r := range active {
+			if i < len(lowerLines) && !hasHint(lowerLines[i], r.Hints) {
+				continue
+			}
 			m := r.re.FindString(l)
 			if m == "" {
 				continue
@@ -404,19 +481,27 @@ func (e *engine) isPlaceholder(m string) bool {
 	return false
 }
 
-func (e *engine) checkPatterns(rel, ext, text string) {
+func (e *engine) checkPatterns(rel, ext, text, lower string) {
+	var active []*patternRule
+	for i := range e.patterns {
+		r := &e.patterns[i]
+		for _, x := range r.Exts {
+			if x == ext && hasHint(lower, r.Hints) {
+				active = append(active, r)
+				break
+			}
+		}
+	}
+	if len(active) == 0 {
+		return
+	}
+	lowerLines := strings.Split(lower, "\n")
 	for i, l := range strings.Split(text, "\n") {
-		if strings.Contains(l, "riskdebt-ignore") {
+		if len(l) > maxLineLen || strings.Contains(l, "riskdebt-ignore") {
 			continue
 		}
-		for _, r := range e.patterns {
-			ok := false
-			for _, x := range r.Exts {
-				if x == ext {
-					ok = true
-				}
-			}
-			if !ok {
+		for _, r := range active {
+			if i < len(lowerLines) && !hasHint(lowerLines[i], r.Hints) {
 				continue
 			}
 			m := r.re.FindString(l)
@@ -579,6 +664,101 @@ func (e *engine) checkWorkflow(rel, text string) {
 	}
 }
 
+func (e *engine) loadIgnores(root string, opts Options) {
+	for _, p := range builtinIgnores {
+		if r, ok := parseIgnoreLine(p); ok {
+			e.ignores = append(e.ignores, r)
+		}
+	}
+	files := []string{".riskdebtignore"}
+	if !opts.NoGitignore {
+		files = append(files, ".gitignore")
+	}
+	for _, name := range files {
+		if data, err := os.ReadFile(filepath.Join(root, name)); err == nil {
+			e.ignores = append(e.ignores, parseIgnoreText(string(data))...)
+		}
+	}
+	for _, p := range opts.Exclude {
+		if r, ok := parseIgnoreLine(p); ok {
+			e.ignores = append(e.ignores, r)
+		}
+	}
+	kb := opts.MaxSizeKB
+	if kb <= 0 {
+		kb = defaultMaxSizeKB
+	}
+	e.maxSize = int64(kb) * 1024
+}
+
+func (e *engine) ignored(rel, base string, isDir bool) bool {
+	for _, r := range e.ignores {
+		if r.matches(rel, base, isDir) {
+			return true
+		}
+	}
+	return false
+}
+
+type entry struct{ rel, abs string }
+
+const scanWorkers = 8
+
+func scanFile(e *engine, rel, abs string, scanned *int64) {
+	base := path.Base(rel)
+	ext := extOf(base)
+	if base == "Dockerfile" || strings.HasPrefix(base, "Dockerfile.") {
+		ext = ".dockerfile"
+	}
+	if binaryExts[ext] {
+		e.skip()
+		return
+	}
+	info, err := os.Stat(abs)
+	if err != nil || info.Size() > e.maxSize {
+		e.skip()
+		return
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		e.skip()
+		return
+	}
+	head := data
+	if len(head) > 8000 {
+		head = head[:8000]
+	}
+	if strings.IndexByte(string(head), 0) >= 0 {
+		e.skip()
+		return
+	}
+	text := string(data)
+	atomic.AddInt64(scanned, 1)
+	switch {
+	case base == "package.json":
+		e.checkPackageJSON(rel, text)
+	case base == "package-lock.json":
+		e.checkPackageLock(rel, text)
+	case strings.HasPrefix(base, "requirements") && ext == ".txt":
+		e.checkRequirements(rel, text)
+	case ext == ".csproj":
+		e.checkCsproj(rel, text)
+	}
+	lower := strings.ToLower(text)
+	e.checkSecrets(rel, text, lower)
+	e.checkPatterns(rel, ext, text, lower)
+	e.checkEOL(rel, base, text)
+	if endsWithPath(rel, ".claude/settings.json") || endsWithPath(rel, ".claude/settings.local.json") {
+		e.checkClaudeSettings(rel, text)
+	}
+	if base == ".mcp.json" || endsWithPath(rel, ".cursor/mcp.json") || endsWithPath(rel, ".vscode/mcp.json") {
+		e.checkMCP(rel, text)
+	}
+	if strings.Contains("/"+rel, "/.github/workflows/") && (ext == ".yml" || ext == ".yaml") {
+		e.checkWorkflow(rel, text)
+	}
+}
+
 // Scan walks root and returns all findings.
 func Scan(root string, opts Options) (*Result, error) {
 	if opts.Today.IsZero() {
@@ -589,20 +769,25 @@ func Scan(root string, opts Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	type entry struct{ rel, abs string }
+	e.loadIgnores(root, opts)
 	var list []entry
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
+		rel, _ := filepath.Rel(root, p)
+		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			if p != root && skipDirs[d.Name()] {
+			if p != root && (skipDirs[d.Name()] || e.ignored(rel, d.Name(), true)) {
+				e.skipped.Dirs++
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		rel, _ := filepath.Rel(root, p)
-		rel = filepath.ToSlash(rel)
+		if e.ignored(rel, d.Name(), false) {
+			e.skipped.Files++
+			return nil
+		}
 		e.files[rel] = true
 		list = append(list, entry{rel, p})
 		return nil
@@ -610,56 +795,25 @@ func Scan(root string, opts Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	scanned := 0
-	for _, f := range list {
-		base := path.Base(f.rel)
-		ext := extOf(base)
-		if base == "Dockerfile" || strings.HasPrefix(base, "Dockerfile.") {
-			ext = ".dockerfile"
-		}
-		if binaryExts[ext] {
-			continue
-		}
-		info, err := os.Stat(f.abs)
-		if err != nil || info.Size() > maxFileSize {
-			continue
-		}
-		data, err := os.ReadFile(f.abs)
-		if err != nil {
-			continue
-		}
-		head := data
-		if len(head) > 8000 {
-			head = head[:8000]
-		}
-		if strings.IndexByte(string(head), 0) >= 0 {
-			continue
-		}
-		text := string(data)
-		scanned++
-		switch {
-		case base == "package.json":
-			e.checkPackageJSON(f.rel, text)
-		case base == "package-lock.json":
-			e.checkPackageLock(f.rel, text)
-		case strings.HasPrefix(base, "requirements") && ext == ".txt":
-			e.checkRequirements(f.rel, text)
-		case ext == ".csproj":
-			e.checkCsproj(f.rel, text)
-		}
-		e.checkSecrets(f.rel, text)
-		e.checkPatterns(f.rel, ext, text)
-		e.checkEOL(f.rel, base, text)
-		if endsWithPath(f.rel, ".claude/settings.json") || endsWithPath(f.rel, ".claude/settings.local.json") {
-			e.checkClaudeSettings(f.rel, text)
-		}
-		if base == ".mcp.json" || endsWithPath(f.rel, ".cursor/mcp.json") || endsWithPath(f.rel, ".vscode/mcp.json") {
-			e.checkMCP(f.rel, text)
-		}
-		if strings.Contains("/"+f.rel, "/.github/workflows/") && (ext == ".yml" || ext == ".yaml") {
-			e.checkWorkflow(f.rel, text)
-		}
+	// Files are independent, and reading them is mostly waiting on the disk (and antivirus), so scan them in parallel.
+	// Findings are sorted below, so the result does not depend on the order the workers finish in.
+	var scanned int64
+	jobs := make(chan entry)
+	var wg sync.WaitGroup
+	for w := 0; w < scanWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for f := range jobs {
+				scanFile(e, f.rel, f.abs, &scanned)
+			}
+		}()
 	}
+	for _, f := range list {
+		jobs <- f
+	}
+	close(jobs)
+	wg.Wait()
 	sort.SliceStable(e.findings, func(i, j int) bool {
 		a, b := e.findings[i], e.findings[j]
 		if a.File != b.File {
@@ -680,5 +834,5 @@ func Scan(root string, opts Options) (*Result, error) {
 	if e.findings == nil {
 		e.findings = []Finding{}
 	}
-	return &Result{Tool: "riskdebt", Version: Version, Root: root, Scanned: scanned, Findings: e.findings, Summary: summary}, nil
+	return &Result{Tool: "riskdebt", Version: Version, Root: root, Scanned: int(scanned), Skipped: e.skipped, Findings: e.findings, Summary: summary}, nil
 }
