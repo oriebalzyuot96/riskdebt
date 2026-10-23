@@ -1,0 +1,6 @@
+# build output and local files
+build-output/
+/secret-local.env
+*.log
+**/generated/
+docs/internal/*.txt

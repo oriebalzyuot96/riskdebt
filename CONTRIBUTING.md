@@ -8,7 +8,10 @@ The easiest and most valuable contribution is a **rule**. Rules are JSON in [`ru
 2. **Secret format**: add to `rules/secrets.json`.
 3. **EOL date**: add to `rules/eol.json` with a source in the PR.
 4. **Compromised release**: add to `rules/compromised.json` with a link to the advisory in the PR.
-5. Add a line to a file in `fixtures/vulnerable-app` that triggers it (never a real secret), then run the conformance check.
+5. Give the rule `hints`: lower-case keywords that every match must contain (for example `"dangerouslysetinnerhtml"`). They let riskdebt skip the regex on files and lines that cannot match, which is what keeps large repos fast. A test fails if a rule has no hints or if hints ever hide a finding.
+6. Add a line to a file in `fixtures/vulnerable-app` that triggers it (never a real secret), then run the conformance check.
+
+The `fixtures/ignore-app` fixture contains its own `.gitignore`, so its files are ignored by git unless added with `git add -f`.
 
 Every finding must tell the user how to fix it.
 

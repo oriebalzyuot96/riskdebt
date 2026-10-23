@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { BUILTIN_IGNORES, matches, parseIgnoreLine, parseIgnoreText } from './ignore.js';
 
 export const VERSION = '0.1.1';
 
@@ -22,9 +23,23 @@ function rulesDir() {
 const loadJSON = (dir, name) => JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
 const compile = (p, flags = '') => new RegExp(p, flags.includes('i') ? 'i' : '');
 
-const SKIP_DIRS = new Set(['.git', 'node_modules', 'vendor', 'dist', 'build', '__pycache__', '.venv', 'venv', 'target', 'bin', 'obj']);
-const BINARY_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.pdf', '.zip', '.gz', '.tar', '.woff', '.woff2', '.ttf', '.eot', '.mp4', '.mp3', '.exe', '.dll', '.so', '.wasm']);
-const MAX_FILE_SIZE = 1 << 20;
+const SKIP_DIRS = new Set([
+  '.git', 'node_modules', 'vendor', 'dist', 'build', '__pycache__', '.venv', 'venv', 'target', 'bin', 'obj',
+  '.next', '.nuxt', '.angular', '.svelte-kit', '.turbo', '.cache', 'coverage', '.gradle', '.idea', '.vs', '.terraform',
+  '.tox', '.mypy_cache', '.pytest_cache', '.parcel-cache', 'bower_components', 'out',
+]);
+const BINARY_EXTS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.pdf', '.zip', '.gz', '.tar', '.woff', '.woff2', '.ttf', '.eot', '.mp4', '.mp3', '.exe', '.dll', '.so', '.wasm',
+  // machine-learning models and datasets (often gigabytes)
+  '.onnx', '.gguf', '.ggml', '.safetensors', '.pt', '.pth', '.ckpt', '.h5', '.hdf5', '.pb', '.tflite', '.npy', '.npz', '.pkl',
+  '.pickle', '.joblib', '.bin', '.model', '.weights', '.parquet', '.feather',
+  // databases, media, archives, compiled output
+  '.db', '.sqlite', '.sqlite3', '.mdb', '.mov', '.avi', '.mkv', '.webm', '.wav', '.flac', '.ogg', '.bmp', '.tiff', '.psd',
+  '.otf', '.7z', '.rar', '.jar', '.class', '.pyc', '.iso', '.dmg',
+]);
+const DEFAULT_MAX_SIZE_KB = 1024;
+// Skips minified one-line bundles: no human wrote them and the regexes are slow on them.
+const MAX_LINE_LEN = 4000;
 
 const extOf = (base) => {
   const i = base.lastIndexOf('.');
@@ -45,7 +60,8 @@ const findKeyLine = (text, key) => {
   }
   return 1;
 };
-const endsWithPath = (rel, p) => rel === p || rel.endsWith('/' + p);
+const hasHint = (lower, hints) => !hints || hints.length === 0 || hints.some((h) => lower.includes(h));
+const endsWithPath =(rel, p) => rel === p || rel.endsWith('/' + p);
 const normalizeName = (eco, name) => {
   name = name.toLowerCase();
   return eco === 'pypi' ? name.replace(/[_.]/g, '-') : name;
@@ -89,6 +105,9 @@ class Engine {
     this.blocklist = [...loadJSON(dir, 'compromised.json'), ...(opts.extraBlocklist || [])];
     this.today = opts.today;
     this.files = new Set();
+    this.ignores = [];
+    this.maxSize = DEFAULT_MAX_SIZE_KB * 1024;
+    this.skipped = { dirs: 0, files: 0 };
     this.findings = [];
   }
 
@@ -181,10 +200,16 @@ class Engine {
     });
   }
 
-  checkSecrets(rel, text) {
+  // lower is the lower-cased file text. A rule is only run on a file (and then a line) that contains one of its
+  // hints, because a regex match always lies inside a single line and contains a hint. This skips almost all regex work.
+  checkSecrets(rel, text, lower) {
+    const active = this.secrets.filter((r) => hasHint(lower, r.hints));
+    if (!active.length) return;
+    const lowerLines = lines(lower);
     lines(text).forEach((l, i) => {
-      if (l.includes('riskdebt-ignore')) return;
-      for (const r of this.secrets) {
+      if (l.length > MAX_LINE_LEN || l.includes('riskdebt-ignore')) return;
+      for (const r of active) {
+        if (i < lowerLines.length && !hasHint(lowerLines[i], r.hints)) continue;
         const m = l.match(r.re);
         if (!m) continue;
         if (r.skipPlaceholders && this.isPlaceholder(m[0])) continue;
@@ -193,12 +218,14 @@ class Engine {
     });
   }
 
-  checkPatterns(rel, ext, text) {
-    const active = this.patterns.filter((r) => r.exts.includes(ext));
+  checkPatterns(rel, ext, text, lower) {
+    const active = this.patterns.filter((r) => r.exts.includes(ext) && hasHint(lower, r.hints));
     if (!active.length) return;
+    const lowerLines = lines(lower);
     lines(text).forEach((l, i) => {
-      if (l.includes('riskdebt-ignore')) return;
+      if (l.length > MAX_LINE_LEN || l.includes('riskdebt-ignore')) return;
       for (const r of active) {
+        if (i < lowerLines.length && !hasHint(lowerLines[i], r.hints)) continue;
         const m = l.match(r.re);
         if (!m || (r.skipPlaceholders && this.isPlaceholder(m[0]))) continue;
         this.add('RD008', r.severity, rel, i + 1, `[${r.framework}] ${r.name}`, r.fix);
@@ -295,14 +322,37 @@ class Engine {
   }
 }
 
-function walk(root, dir, out) {
+function loadIgnores(e, root, opts) {
+  for (const p of BUILTIN_IGNORES) e.ignores.push(parseIgnoreLine(p));
+  const names = ['.riskdebtignore'];
+  if (!opts.noGitignore) names.push('.gitignore');
+  for (const name of names) {
+    try {
+      e.ignores.push(...parseIgnoreText(fs.readFileSync(path.join(root, name), 'utf8')));
+    } catch {
+      // no such file
+    }
+  }
+  for (const p of opts.exclude || []) {
+    const r = parseIgnoreLine(p);
+    if (r) e.ignores.push(r);
+  }
+  e.maxSize = (opts.maxSizeKB > 0 ? opts.maxSizeKB : DEFAULT_MAX_SIZE_KB) * 1024;
+}
+
+const isIgnored = (e, rel, base, isDir) => e.ignores.some((r) => matches(r, rel, base, isDir));
+
+function walk(e, root, dir, out) {
   const entries = fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   for (const d of entries) {
     const abs = path.join(dir, d.name);
+    const rel = path.relative(root, abs).split(path.sep).join('/');
     if (d.isDirectory()) {
-      if (!SKIP_DIRS.has(d.name)) walk(root, abs, out);
+      if (SKIP_DIRS.has(d.name) || isIgnored(e, rel, d.name, true)) e.skipped.dirs++;
+      else walk(e, root, abs, out);
     } else if (d.isFile()) {
-      out.push({ rel: path.relative(root, abs).split(path.sep).join('/'), abs });
+      if (isIgnored(e, rel, d.name, false)) e.skipped.files++;
+      else out.push({ rel, abs });
     }
   }
 }
@@ -314,31 +364,43 @@ export function scan(root, opts = {}) {
     today = Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate());
   }
   const e = new Engine({ ...opts, today });
+  loadIgnores(e, root, opts);
   const list = [];
-  walk(root, root, list);
+  walk(e, root, root, list);
   for (const f of list) e.files.add(f.rel);
   let scanned = 0;
   for (const f of list) {
     const base = path.posix.basename(f.rel);
     let ext = extOf(base);
     if (base === 'Dockerfile' || base.startsWith('Dockerfile.')) ext = '.dockerfile';
-    if (BINARY_EXTS.has(ext)) continue;
-    let buf;
-    try {
-      if (fs.statSync(f.abs).size > MAX_FILE_SIZE) continue;
-      buf = fs.readFileSync(f.abs);
-    } catch {
+    if (BINARY_EXTS.has(ext)) {
+      e.skipped.files++;
       continue;
     }
-    if (buf.subarray(0, 8000).includes(0)) continue;
+    let buf;
+    try {
+      if (fs.statSync(f.abs).size > e.maxSize) {
+        e.skipped.files++;
+        continue;
+      }
+      buf = fs.readFileSync(f.abs);
+    } catch {
+      e.skipped.files++;
+      continue;
+    }
+    if (buf.subarray(0, 8000).includes(0)) {
+      e.skipped.files++;
+      continue;
+    }
     const text = buf.toString('utf8');
     scanned++;
     if (base === 'package.json') e.checkPackageJSON(f.rel, text);
     else if (base === 'package-lock.json') e.checkPackageLock(f.rel, text);
     else if (base.startsWith('requirements') && ext === '.txt') e.checkRequirements(f.rel, text);
     else if (ext === '.csproj') e.checkCsproj(f.rel, text);
-    e.checkSecrets(f.rel, text);
-    e.checkPatterns(f.rel, ext, text);
+    const lower = text.toLowerCase();
+    e.checkSecrets(f.rel, text, lower);
+    e.checkPatterns(f.rel, ext, text, lower);
     e.checkEOL(f.rel, base, text);
     if (endsWithPath(f.rel, '.claude/settings.json') || endsWithPath(f.rel, '.claude/settings.local.json')) e.checkClaudeSettings(f.rel, text);
     if (base === '.mcp.json' || endsWithPath(f.rel, '.cursor/mcp.json') || endsWithPath(f.rel, '.vscode/mcp.json')) e.checkMCP(f.rel, text);
@@ -348,5 +410,5 @@ export function scan(root, opts = {}) {
   e.findings.sort((a, b) => cmp(a.file, b.file) || a.line - b.line || cmp(a.rule, b.rule) || cmp(a.message, b.message));
   const summary = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   for (const f of e.findings) summary[f.severity]++;
-  return { tool: 'riskdebt', version: VERSION, root, scanned, findings: e.findings, summary };
+  return { tool: 'riskdebt', version: VERSION, root, scanned, skipped: e.skipped, findings: e.findings, summary };
 }

@@ -18,6 +18,9 @@ Options:
       --fail-on <severity>   exit 1 at or above: critical|high|medium|low|none (default high)
       --today <YYYY-MM-DD>   override today's date (for reproducible EOL checks)
       --blocklist <file>     extra compromised-package list (JSON)
+      --exclude <pattern>    skip paths, .gitignore-style (repeatable); also reads .riskdebtignore
+      --no-gitignore         do not read .gitignore (it is honoured by default)
+      --max-size <KB>        skip files larger than this (default 1024)
   -v, --version              print version
   -h, --help                 show this help
 """
@@ -33,6 +36,9 @@ def main(argv: list[str] | None = None) -> int:
     root, fmt, fail_on = ".", "text", "high"
     today = None
     extra = None
+    exclude: list[str] = []
+    no_gitignore = False
+    max_size = None
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -59,6 +65,15 @@ def main(argv: list[str] | None = None) -> int:
             if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
                 _die("--today must be YYYY-MM-DD")
             today = date.fromisoformat(v)
+        elif a == "--exclude":
+            exclude.append(nxt())
+        elif a == "--no-gitignore":
+            no_gitignore = True
+        elif a == "--max-size":
+            v = nxt()
+            if not v.isdigit() or int(v) <= 0:
+                _die("--max-size must be a positive number of KB")
+            max_size = int(v)
         elif a == "--blocklist":
             try:
                 with open(nxt(), encoding="utf-8") as fh:
@@ -76,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
     if fail_on != "none" and rank(fail_on) < 0:
         _die("--fail-on must be critical|high|medium|low|none")
 
-    res = scan(root, today=today, extra_blocklist=extra)
+    res = scan(root, today=today, extra_blocklist=extra, no_gitignore=no_gitignore, max_size_kb=max_size, exclude=exclude)
     if fmt == "sarif":
         print(json.dumps(to_sarif(res), indent=2))
     elif fmt == "json":
@@ -95,7 +110,9 @@ def _print_text(r: dict) -> None:
     def paint(code: str, s: str) -> str:
         return f"\x1b[{code}m{s}\x1b[0m" if color else s
 
-    print(f"riskdebt {r['version']} - scanned {r['scanned']} files in {r['root']}\n")
+    sk = r["skipped"]
+    print(f"riskdebt {r['version']} - scanned {r['scanned']} files in {r['root']} "
+          f"(skipped {sk['dirs']} folders, {sk['files']} files: ignored, binary or too large)\n")
     for f in r["findings"]:
         print(f"{paint(colors[f['severity']], f['severity'].upper().ljust(8))} {f['rule']}  {f['file']}:{f['line']}")
         print(f"  problem: {f['message']}")
