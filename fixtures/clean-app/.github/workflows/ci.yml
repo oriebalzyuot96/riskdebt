@@ -1,7 +1,13 @@
 name: ci
 on: [push]
+permissions:
+  contents: read
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - name: Safe, value goes through env
+        env:
+          TITLE: ${{ github.event.head_commit.message }}
+        run: echo "$TITLE"

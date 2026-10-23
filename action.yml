@@ -15,8 +15,14 @@ inputs:
   upload-sarif:
     description: 'Upload results to GitHub code scanning (the workflow needs permissions: security-events: write)'
     default: 'true'
+  since:
+    description: 'Only fail on findings on lines changed since this git ref, e.g. origin/main for a pull request (needs fetch-depth: 0). The code-scanning upload always contains the full results.'
+    default: ''
+  baseline:
+    description: 'Baseline file of known findings to ignore when gating (see --write-baseline). Defaults to .riskdebt-baseline.json if it exists.'
+    default: ''
   version:
-    description: riskdebt version to install (a tag such as v0.1.1, or latest)
+    description: riskdebt version to install (a tag such as v0.2.0, or latest)
     default: latest
 
 runs:
@@ -50,4 +56,10 @@ runs:
       env:
         RD_PATH: ${{ inputs.path }}
         RD_FAIL_ON: ${{ inputs.fail-on }}
-      run: riskdebt "$RD_PATH" --fail-on "$RD_FAIL_ON"
+        RD_SINCE: ${{ inputs.since }}
+        RD_BASELINE: ${{ inputs.baseline }}
+      run: |
+        args=(--fail-on "$RD_FAIL_ON")
+        if [ -n "$RD_SINCE" ]; then args+=(--since "$RD_SINCE"); fi
+        if [ -n "$RD_BASELINE" ]; then args+=(--baseline "$RD_BASELINE"); fi
+        riskdebt "$RD_PATH" "${args[@]}"
