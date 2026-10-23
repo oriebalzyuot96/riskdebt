@@ -182,6 +182,10 @@ node scripts/conformance.mjs
 
 `riskdebt` is a fast, offline, heuristic first line of defence. It reads files with regexes and a few parsers; it does not do data-flow analysis, query live vulnerability databases, or replace a SAST/SCA product, a pentest, or patching. The EOL and compromised lists are curated by hand: verify against [endoflife.date](https://endoflife.date) and your advisory feed. Expect some false positives; tune with `--fail-on`, `riskdebt-ignore` and your own rules.
 
+## Security research mode
+
+[`research/`](research/) scans published npm packages (for example Angular libraries) for candidate problems and writes a review list with the code around each lead. It is for responsible, local research: read [research/README.md](research/README.md) before reporting anything to a maintainer.
+
 ## Roadmap
 
 - Live advisory lookups (OSV) behind an opt-in flag

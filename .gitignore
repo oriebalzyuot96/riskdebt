@@ -6,3 +6,8 @@ dist/
 /riskdebt
 /riskdebt.exe
 node/rules/
+
+# research/: downloaded packages, generated candidate reports and local proofs of concept stay private
+research/work/
+research/reports/
+research/poc/
