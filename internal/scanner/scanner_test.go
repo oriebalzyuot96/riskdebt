@@ -1,7 +1,9 @@
 package scanner
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -95,6 +97,26 @@ func TestEveryRuleHasHints(t *testing.T) {
 			if h != strings.ToLower(h) {
 				t.Errorf("pattern rule %s: hint %q must be lower-case", r.ID, h)
 			}
+		}
+	}
+}
+
+// The same cases drive the Node.js and Python tests.
+func TestIsWordySharedCases(t *testing.T) {
+	data, err := os.ReadFile("../../fixtures/wordy-cases.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Value string `json:"value"`
+		Want  bool   `json:"want"`
+	}
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cases {
+		if got := isWordy(c.Value); got != c.Want {
+			t.Errorf("isWordy(%q) = %v, want %v", c.Value, got, c.Want)
 		}
 	}
 }

@@ -13,7 +13,8 @@ export const rank = (s) => (s in SEVERITY_RANK ? SEVERITY_RANK[s] : -1);
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 function rulesDir() {
-  const candidates = [process.env.RISKDEBT_RULES, path.join(here, '..', 'rules'), path.join(here, '..', '..', 'rules')];
+  // In a repo checkout the shared rules/ folder is the source of truth; the copy inside the package is only for installs.
+  const candidates = [process.env.RISKDEBT_RULES, path.join(here, '..', '..', 'rules'), path.join(here, '..', 'rules')];
   for (const c of candidates) {
     if (c && fs.existsSync(path.join(c, 'meta.json'))) return c;
   }
@@ -60,6 +61,40 @@ const findKeyLine = (text, key) => {
   }
   return 1;
 };
+// The text inside the last quoted string of a match such as token: "abc".
+export function lastQuoted(m) {
+  const q = m[m.length - 1];
+  if (m.length < 2 || (q !== '"' && q !== "'")) return m;
+  const i = m.lastIndexOf(q, m.length - 2);
+  return i >= 0 ? m.slice(i + 1, -1) : m;
+}
+
+// Does a value read like words (a route, an error code, a CSS variable) rather than a random secret? At least two
+// words (split on _ - / + and camelCase), each three or more letters, and at most two digits.
+export function isWordy(v) {
+  let digits = 0;
+  const tokens = [];
+  let cur = '';
+  const flush = () => {
+    if (cur) tokens.push(cur);
+    cur = '';
+  };
+  let prev = '';
+  for (const c of v) {
+    if (c >= '0' && c <= '9') {
+      digits++;
+      cur += c;
+    } else if (c === '_' || c === '-' || c === '/' || c === '+') flush();
+    else if (c >= 'A' && c <= 'Z' && prev >= 'a' && prev <= 'z') {
+      flush();
+      cur += c;
+    } else cur += c;
+    prev = c;
+  }
+  flush();
+  return digits <= 2 && tokens.length >= 2 && tokens.every((t) => t.length >= 3);
+}
+
 const hasHint = (lower, hints) => !hints || hints.length === 0 || hints.some((h) => lower.includes(h));
 const endsWithPath =(rel, p) => rel === p || rel.endsWith('/' + p);
 const normalizeName = (eco, name) => {
@@ -105,7 +140,8 @@ class Engine {
     this.blocklist = [...loadJSON(dir, 'compromised.json'), ...(opts.extraBlocklist || [])];
     this.today = opts.today;
     this.files = new Set();
-    this.ignores = [];
+    this.ignores = []; // { rule, scope }: scope is a folder relative to the scan root ("" = everywhere)
+    this.gitignore = true;
     this.maxSize = DEFAULT_MAX_SIZE_KB * 1024;
     this.skipped = { dirs: 0, files: 0 };
     this.findings = [];
@@ -213,6 +249,7 @@ class Engine {
         const m = l.match(r.re);
         if (!m) continue;
         if (r.skipPlaceholders && this.isPlaceholder(m[0])) continue;
+        if (r.valueFilter === 'wordy' && isWordy(lastQuoted(m[0]))) continue;
         this.add('RD004', r.severity, rel, i + 1, `Possible ${r.name} committed to source`);
       }
     });
@@ -322,27 +359,44 @@ class Engine {
   }
 }
 
+const addIgnores = (e, scope, rules) => {
+  for (const rule of rules) e.ignores.push({ rule, scope });
+};
+
+// Reads dir/.gitignore the way git does: its patterns only apply inside dir, and "/pattern" is anchored to dir.
+function loadNestedGitignore(e, dirAbs, dirRel) {
+  if (!e.gitignore) return;
+  try {
+    addIgnores(e, dirRel, parseIgnoreText(fs.readFileSync(path.join(dirAbs, '.gitignore'), 'utf8')));
+  } catch {
+    // no such file
+  }
+}
+
 function loadIgnores(e, root, opts) {
-  for (const p of BUILTIN_IGNORES) e.ignores.push(parseIgnoreLine(p));
+  e.gitignore = !opts.noGitignore;
+  addIgnores(e, '', BUILTIN_IGNORES.map(parseIgnoreLine));
   const names = ['.riskdebtignore'];
   if (!opts.noGitignore) names.push('.gitignore');
   for (const name of names) {
     try {
-      e.ignores.push(...parseIgnoreText(fs.readFileSync(path.join(root, name), 'utf8')));
+      addIgnores(e, '', parseIgnoreText(fs.readFileSync(path.join(root, name), 'utf8')));
     } catch {
       // no such file
     }
   }
-  for (const p of opts.exclude || []) {
-    const r = parseIgnoreLine(p);
-    if (r) e.ignores.push(r);
-  }
+  addIgnores(e, '', (opts.exclude || []).map(parseIgnoreLine).filter(Boolean));
   e.maxSize = (opts.maxSizeKB > 0 ? opts.maxSizeKB : DEFAULT_MAX_SIZE_KB) * 1024;
 }
 
-const isIgnored = (e, rel, base, isDir) => e.ignores.some((r) => matches(r, rel, base, isDir));
+const isIgnored = (e, rel, base, isDir) =>
+  e.ignores.some(({ rule, scope }) => {
+    if (scope === '') return matches(rule, rel, base, isDir);
+    return rel.startsWith(scope + '/') && matches(rule, rel.slice(scope.length + 1), base, isDir);
+  });
 
 function walk(e, root, dir, out) {
+  if (dir !== root) loadNestedGitignore(e, dir, path.relative(root, dir).split(path.sep).join('/'));
   const entries = fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   for (const d of entries) {
     const abs = path.join(dir, d.name);
